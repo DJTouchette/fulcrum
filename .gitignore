@@ -1,0 +1,69 @@
+# Binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go build
+*.out
+
+# Node modules
+node_modules/
+
+# Environment variables
+.env
+
+# Logs
+*.log
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+
+# Dependency directories
+dist/
+
+# Generated files
+*.pb.go
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+
+# Coverage and test results
+coverage.out
+*.cov
+
+# TypeScript build files
+*.tsbuildinfo
+**/*.js.map
+
+# Build outputs
+build/
+dist/
+out/
+
+# Test coverage
+coverage/
+*.lcov
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Don't ignore the .ai directory - it's part of the project
+# .ai/
