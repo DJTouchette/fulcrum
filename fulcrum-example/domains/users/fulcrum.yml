@@ -1,0 +1,23 @@
+models:
+  - user:
+      email:
+        type: text
+        validations:
+          - nullable: false
+          - length:
+              min: 5
+              max: 80
+      name:
+        type: text
+        validations:
+          - nullable: false
+          - length:
+              min: 1
+              max: 20
+logic:
+  http:
+    restful: true
+    routes:
+      - method: GET 
+        link: user_index_request
+        view: index

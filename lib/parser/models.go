@@ -16,9 +16,19 @@ type AppConfig struct {
 }
 
 type DBConfig struct {
-	Type string `yaml:"type"`
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
+	Driver          string `yaml:"driver"` // postgres, mysql, sqlite
+	Host            string `yaml:"host"`
+	Port            int    `yaml:"port"`
+	Database        string `yaml:"database"`
+	Username        string `yaml:"username"`
+	Password        string `yaml:"password"`
+	SSLMode         string `yaml:"ssl_mode"`
+	MaxOpenConns    int    `yaml:"max_open_conns"`
+	MaxIdleConns    int    `yaml:"max_idle_conns"`
+	ConnMaxLifetime int    `yaml:"conn_max_lifetime_minutes"`
+
+	// SQLite specific
+	FilePath string `yaml:"file_path"`
 }
 
 type DomainConfig struct {

@@ -1,0 +1,18 @@
+{
+  "name": "@fulcrum/domain",
+  "version": "1.0.0",
+  "description": "Node.js domain package for Fulcrum framework",
+  "main": "index.js",
+  "scripts": {
+    "start": "node example-domain.js",
+    "dev": "nodemon example-domain.js"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.10.0",
+    "@grpc/proto-loader": "^0.7.10",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

@@ -5,5 +5,5 @@ const (
 	Nullable             = "nullable"
 	ValidateLength       = "length"
 	ValidateLengthMin    = "min"
-	ValidateLengthMax    = "maz"
+	ValidateLengthMax    = "max"
 )

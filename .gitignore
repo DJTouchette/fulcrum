@@ -67,3 +67,7 @@ Thumbs.db
 
 # Don't ignore the .ai directory - it's part of the project
 # .ai/
+
+# Test files
+test_db.go
+test/

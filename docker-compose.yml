@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: fulcrum-postgres
+    environment:
+      POSTGRES_DB: fulcrum_dev
+      POSTGRES_USER: fulcrum
+      POSTGRES_PASSWORD: fulcrum_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
+    networks:
+      - fulcrum-network
+
+  # Optional: pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: fulcrum-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@fulcrum.dev
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8081:80"
+    depends_on:
+      - postgres
+    networks:
+      - fulcrum-network
+    profiles:
+      - admin
+
+volumes:
+  postgres_data:
+
+networks:
+  fulcrum-network:
+    driver: bridge
