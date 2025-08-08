@@ -1,5 +1,5 @@
 db:
-  driver: postgres
+  driver: postgresql
   host: localhost
   port: 5432
   database: fulcrum_dev

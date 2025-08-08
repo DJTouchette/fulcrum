@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"fulcrum/lib/database"
 	"io"
 	"log"
 	"net"
 	"sync"
 	"time"
+
+	interfaces "fulcrum/lib/database/interfaces"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -36,6 +39,8 @@ type PendingRequest struct {
 
 type FrameworkServer struct {
 	UnimplementedFrameworkServiceServer
+	db              interfaces.Database
+	dbExecutor      *database.DatabaseExecutor // Add DatabaseExecutor
 	messageBus      MessageBus
 	domainStreams   map[string]FrameworkService_DomainCommunicationServer
 	pendingRequests map[string]*PendingRequest
@@ -255,52 +260,90 @@ func (s *FrameworkServer) handleDomainResponse(msg *DomainMessage) {
 }
 
 func (s *FrameworkServer) processMessage(msg *DomainMessage) *RuntimeMessage {
-	// Handle framework-level messages (db, email, etc.)
+	ctx := context.Background()
+	var responsePayload []byte
+	success := true
+	var errMsg string
+
 	switch msg.Type {
 	case "domain_register":
-		// Handle domain registration
 		log.Printf("Domain %s registered successfully", msg.Domain)
-		return &RuntimeMessage{
-			Type:      "register_success",
-			Payload:   `{"status": "registered"}`,
-			RequestId: msg.RequestId,
-			Success:   true,
-		}
+		responsePayload = []byte(`{"status": "registered"}`)
 	case "db_create":
-		// Simulate database creation
-		log.Printf("Creating database record for domain %s", msg.Domain)
-		return &RuntimeMessage{
-			Type:      "db_result",
-			Payload:   `{"id": 123, "status": "created"}`,
-			RequestId: msg.RequestId,
-			Success:   true,
+		var reqData struct {
+			Table string         `json:"table"`
+			Data  map[string]any `json:"data"`
+		}
+
+		fmt.Printf("Processing db_create for domain %s", msg.Domain)
+		fmt.Printf("Processing db_create for domain %s", msg.Payload)
+		if err := json.Unmarshal([]byte(msg.Payload), &reqData); err != nil {
+			success = false
+			errMsg = fmt.Sprintf("Invalid db_create payload: %v", err)
+		} else {
+			resp, err := s.dbExecutor.CreateRecord(ctx, reqData.Table, reqData.Data, &msg.RequestId)
+			if err != nil {
+				success = false
+				errMsg = fmt.Sprintf("db_create failed: %v", err)
+			} else {
+				responsePayload = resp
+			}
+		}
+	case "db_update":
+		var reqData struct {
+			Table string         `json:"table"`
+			ID    any            `json:"id"`
+			Data  map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(msg.Payload), &reqData); err != nil {
+			success = false
+			errMsg = fmt.Sprintf("Invalid db_update payload: %v", err)
+		} else {
+			resp, err := s.dbExecutor.UpdateRecord(ctx, reqData.Table, reqData.ID, reqData.Data, &msg.RequestId)
+			if err != nil {
+				success = false
+				errMsg = fmt.Sprintf("db_update failed: %v", err)
+			} else {
+				responsePayload = resp
+			}
 		}
 	case "db_find":
-		// Simulate database find
-		log.Printf("Finding database records for domain %s", msg.Domain)
-		return &RuntimeMessage{
-			Type:      "db_result",
-			Payload:   `{"records": [{"id": 123, "name": "Test User", "email": "test@example.com"}]}`,
-			RequestId: msg.RequestId,
-			Success:   true,
+		fmt.Printf("Processing db_find for domain %s", msg.Domain)
+		fmt.Printf("Processing db_find for domain %s", msg.Payload)
+		var reqData struct {
+			Table string         `json:"table"`
+			Query map[string]any `json:"query"`
+		}
+		if err := json.Unmarshal([]byte(msg.Payload), &reqData); err != nil {
+			success = false
+			errMsg = fmt.Sprintf("Invalid db_find payload: %v", err)
+		} else {
+			resp, err := s.dbExecutor.FindRecords(ctx, reqData.Table, reqData.Query, &msg.RequestId)
+			if err != nil {
+				success = false
+				errMsg = fmt.Sprintf("db_find failed: %v", err)
+			} else {
+				responsePayload = resp
+			}
 		}
 	case "email_send":
-		// Simulate email sending
 		log.Printf("Sending email for domain %s", msg.Domain)
-		return &RuntimeMessage{
-			Type:      "email_result",
-			Payload:   `{"status": "sent"}`,
-			RequestId: msg.RequestId,
-			Success:   true,
-		}
+		responsePayload = []byte(`{"status": "sent"}`)
 	default:
-		log.Printf("Unknown framework message type: %s", msg.Type)
-		return &RuntimeMessage{
-			Type:      "error",
-			RequestId: msg.RequestId,
-			Success:   false,
-			Error:     fmt.Sprintf("Unknown message type: %s", msg.Type),
-		}
+		success = false
+		errMsg = fmt.Sprintf("Unknown framework message type: %s", msg.Type)
+	}
+
+	if !success && responsePayload == nil {
+		responsePayload = []byte(fmt.Sprintf(`{"success": false, "error": "%s"}`, errMsg))
+	}
+
+	return &RuntimeMessage{
+		Type:      msg.Type,
+		Payload:   string(responsePayload),
+		RequestId: msg.RequestId,
+		Success:   success,
+		Error:     errMsg,
 	}
 }
 
@@ -325,7 +368,7 @@ func (s *FrameworkServer) startCleanupRoutine() {
 	}()
 }
 
-func Listen() *FrameworkServer {
+func Listen(db interfaces.Database) *FrameworkServer {
 	// Create listener
 	listener, err := net.Listen("tcp", ":50051")
 	if err != nil {
@@ -338,6 +381,8 @@ func Listen() *FrameworkServer {
 
 	// Create framework server
 	frameworkServer := &FrameworkServer{
+		db:              db,
+		dbExecutor:      database.NewDatabaseExecutor(db), // Initialize DatabaseExecutor
 		domainStreams:   make(map[string]FrameworkService_DomainCommunicationServer),
 		pendingRequests: make(map[string]*PendingRequest),
 	}

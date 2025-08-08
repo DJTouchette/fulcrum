@@ -262,18 +262,18 @@ type PostgreSQLRows struct {
 	rows *sql.Rows
 }
 
-func (r *PostgreSQLRows) Close() error                   { return r.rows.Close() }
-func (r *PostgreSQLRows) Next() bool                     { return r.rows.Next() }
-func (r *PostgreSQLRows) Scan(dest ...interface{}) error { return r.rows.Scan(dest...) }
-func (r *PostgreSQLRows) Columns() ([]string, error)     { return r.rows.Columns() }
-func (r *PostgreSQLRows) Err() error                     { return r.rows.Err() }
+func (r *PostgreSQLRows) Close() error               { return r.rows.Close() }
+func (r *PostgreSQLRows) Next() bool                 { return r.rows.Next() }
+func (r *PostgreSQLRows) Scan(dest ...any) error     { return r.rows.Scan(dest...) }
+func (r *PostgreSQLRows) Columns() ([]string, error) { return r.rows.Columns() }
+func (r *PostgreSQLRows) Err() error                 { return r.rows.Err() }
 
 // PostgreSQLRow wraps sql.Row
 type PostgreSQLRow struct {
 	row *sql.Row
 }
 
-func (r *PostgreSQLRow) Scan(dest ...interface{}) error { return r.row.Scan(dest...) }
+func (r *PostgreSQLRow) Scan(dest ...any) error { return r.row.Scan(dest...) }
 
 // PostgreSQLResult wraps sql.Result
 type PostgreSQLResult struct {
@@ -288,7 +288,7 @@ type PostgreSQLTx struct {
 	tx *sql.Tx
 }
 
-func (t *PostgreSQLTx) Query(ctx context.Context, query string, args ...interface{}) (interfaces.Rows, error) {
+func (t *PostgreSQLTx) Query(ctx context.Context, query string, args ...any) (interfaces.Rows, error) {
 	rows, err := t.tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -296,12 +296,12 @@ func (t *PostgreSQLTx) Query(ctx context.Context, query string, args ...interfac
 	return rows, nil
 }
 
-func (t *PostgreSQLTx) QueryRow(ctx context.Context, query string, args ...interface{}) interfaces.Row {
+func (t *PostgreSQLTx) QueryRow(ctx context.Context, query string, args ...any) interfaces.Row {
 	row := t.tx.QueryRowContext(ctx, query, args...)
 	return row
 }
 
-func (t *PostgreSQLTx) Exec(ctx context.Context, query string, args ...interface{}) (interfaces.Result, error) {
+func (t *PostgreSQLTx) Exec(ctx context.Context, query string, args ...any) (interfaces.Result, error) {
 	result, err := t.tx.ExecContext(ctx, query, args...)
 	if err != nil {
 		return nil, err

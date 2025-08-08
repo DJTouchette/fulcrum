@@ -63,6 +63,7 @@ type Route struct {
 	Method   string `yaml:"method"`
 	Link     string `yaml:"link"`
 	View     string `yaml:"view"`
+	Path     string `yaml:"path"`
 	ViewPath string
 }
 

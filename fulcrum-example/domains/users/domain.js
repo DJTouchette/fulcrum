@@ -18,21 +18,20 @@ export default class UserDomain extends DomainBase {
         }
         
         // Create user in database
-        const user = await this.createRecord('users', {
+        const result = await this.createRecord('users', {
             name: userData.name,
             email: userData.email,
             created_at: new Date().toISOString()
         }, context.requestId);
         
-        // Send welcome email
-        await this.email(context.requestId)
-            .to(userData.email)
-            .subject('Welcome!')
-            .template('welcome')
-            .send();
-        
-        console.log('User created and welcome email sent');
-        return user; // This becomes the response data
+        if (!result.success) {
+            throw new Error(`Failed to create user: ${result.error}`);
+        }
+
+        // For create, we might need to query back the created user if the ID is auto-generated
+        // For simplicity, let's assume the ID is returned or we can query it back.
+        // For now, we'll return a success message.
+        return { success: true, message: "User created successfully", id: result.lastInsertId };
     }
 
     /**
@@ -42,11 +41,11 @@ export default class UserDomain extends DomainBase {
     async userIndexHandler(query, context) {
         console.log('Fetching users with query:', query);
         
-        // Return mock data for now - replace with actual DB query
-        return [
-            { id: 1, name: 'John Doe', email: 'john@example.com' },
-            { id: 2, name: 'Jane Doe', email: 'jane@example.com' },
-        ];
+        const users = await this.findRecords('users', {}, context.requestId);
+        console.log('USERS')
+        const data = JSON.parse(users.payload);
+        console.log(data.data)
+        return data.data;
     }
 
     /**
@@ -54,7 +53,10 @@ export default class UserDomain extends DomainBase {
      * Auto-mapped to 'user_show_request' messages
      */
     async userShowHandler(params, context) {
-        const userId = params.id;
+        console.log(params)
+        console.log(context)
+
+        const userId = params.user_id;
         
         if (!userId) {
             throw new Error('User ID is required');
@@ -62,12 +64,14 @@ export default class UserDomain extends DomainBase {
 
         // Find user by ID
         const users = await this.findRecords('users', { id: userId }, context.requestId);
+        const data = JSON.parse(users.payload);
         
-        if (users.length === 0) {
+        if (data,data.length === 0) {
             throw new Error('User not found');
         }
 
-        return users[0];
+        console.log(data)
+        return data.data[0];
     }
 
     /**
@@ -81,8 +85,13 @@ export default class UserDomain extends DomainBase {
             throw new Error('User ID is required');
         }
 
-        const updatedUser = await this.updateRecord('users', id, updateData, context.requestId);
-        return updatedUser;
+        const result = await this.updateRecord('users', id, updateData, context.requestId);
+        
+        if (!result.success) {
+            throw new Error(`Failed to update user: ${result.error}`);
+        }
+
+        return { success: true, message: "User updated successfully", rowsAffected: result.rowsAffected };
     }
 
     /**

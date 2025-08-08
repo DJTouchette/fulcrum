@@ -18,6 +18,18 @@ logic:
   http:
     restful: true
     routes:
+      - method: GET
+        view: create 
+        path: "/create"
+      - method: GET
+        view: show 
+        link: user_show_request
+        path: "/show/{user_id}"
       - method: GET 
         link: user_index_request
         view: index
+        path: "/"
+      - method: POST
+        link: user_create_request
+        view: none 
+        path: "/"

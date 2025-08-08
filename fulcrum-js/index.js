@@ -1,13 +1,7 @@
-// const grpc = require('@grpc/grpc-js');
-// const protoLoader = require('@grpc/proto-loader');
-// const { v4: uuidv4 } = require('uuid');
-// const path = require('path');
-//
 import grpc from '@grpc/grpc-js';
 import protoLoader from '@grpc/proto-loader';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
-import { MigrationUtils } from './migration.js';
 
 class DomainClient {
     constructor(domainName, serverAddress = 'localhost:50051') {
@@ -295,7 +289,6 @@ export class DomainBase {
     constructor(domainName, serverAddress = 'localhost:50051') {
         this.client = new DomainClient(domainName, serverAddress);
         this.setupAutoHandlers();
-        this.setupMigrationSupport();
     }
 
     /**
@@ -397,13 +390,6 @@ export class DomainBase {
         this.client.disconnect();
     }
 
-    /**
-     * Set up migration support for this domain
-     */
-    setupMigrationSupport() {
-        this.migrationUtils = new MigrationUtils(this.client);
-    }
-
     // Convenient access to client methods
     get db() {
         return (table, requestId) => this.client.db(table, requestId);
@@ -430,5 +416,4 @@ export class DomainBase {
     }
 }
 
-export default { DomainClient, DatabaseBuilder, EmailBuilder, DomainBase, MigrationUtils }
-// module.exports = { DomainClient, DatabaseBuilder, EmailBuilder, DomainBase, MigrationUtils };
+export default { DomainClient, DatabaseBuilder, EmailBuilder, DomainBase }

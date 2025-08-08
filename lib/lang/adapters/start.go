@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"fulcrum/lib/database"
+	"fulcrum/lib/database/interfaces"
 	parser "fulcrum/lib/parser"
 	"fulcrum/lib/views"
 	"io"
@@ -12,24 +14,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
-
-// CreateFrameworkServer creates and initializes a new FrameworkServer instance
-func CreateFrameworkServer() *FrameworkServer {
-	// Create and configure the framework server
-	frameworkServer := &FrameworkServer{
-		// Initialize your dependencies here if needed
-		// messageBus: yourMessageBusInstance,
-	}
-
-	log.Println("FrameworkServer created and initialized")
-	return frameworkServer
-}
 
 // RouteHandler holds route information and the associated domain
 type RouteHandler struct {
@@ -39,7 +30,6 @@ type RouteHandler struct {
 	Domain string
 }
 
-// CreateRouteDispatcher creates HTTP handlers from the parsed AppConfig
 func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *FrameworkServer) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -52,8 +42,8 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *Framewo
 	for _, domain := range appConfig.Domains {
 		if domain.Logic.HTTP.Restful {
 			for _, route := range domain.Logic.HTTP.Routes {
-				// Create the route path
-				routePath := fmt.Sprintf("/%s", domain.Name)
+				// Build the full route path
+				routePath := fmt.Sprintf("/%s%s", domain.Name, route.Path)
 
 				// Create handler for this specific route
 				handler := createRouteHandler(route, domain.Name, frameworkServer, appConfig)
@@ -61,8 +51,8 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *Framewo
 				log.Printf("Registering route: %s %s -> domain: %s, link: %s",
 					route.Method, routePath, domain.Name, route.Link)
 
-				// Register the handler
-				mux.HandleFunc(routePath, handler)
+				pattern := fmt.Sprintf("%s %s", route.Method, routePath)
+				mux.HandleFunc(pattern, handler)
 			}
 		}
 	}
@@ -74,7 +64,8 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *Framewo
 		for _, domain := range appConfig.Domains {
 			if domain.Logic.HTTP.Restful {
 				for _, route := range domain.Logic.HTTP.Routes {
-					fmt.Fprintf(w, "  %s /%s (domain: %s)\n", route.Method, domain.Name, domain.Name)
+					routePath := fmt.Sprintf("/%s%s", domain.Name, route.Path)
+					fmt.Fprintf(w, "  %s %s (domain: %s)\n", route.Method, routePath, domain.Name)
 				}
 			}
 		}
@@ -83,14 +74,47 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *Framewo
 	return mux
 }
 
-// createRouteHandler creates a handler function for a specific route
 func createRouteHandler(route parser.Route, domainName string, frameworkServer *FrameworkServer, appConfig *parser.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("🔍 Handler called for: %s %s (route: %s, domain: %s)",
+			r.Method, r.URL.Path, route.Path, domainName)
 		// Check if method matches
 		if r.Method != route.Method {
 			http.Error(w, fmt.Sprintf("Method %s not allowed for this route", r.Method), http.StatusMethodNotAllowed)
 			return
 		}
+
+		// If no link is specified, just render the view directly
+		if route.Link == "" {
+			if route.View != "" && route.ViewPath != "" {
+				// Extract any data for template context (query params, path params, form data)
+				templateData := extractRequestDataForTemplate(r, route.Path, domainName)
+
+				html, err := appConfig.Views.RenderWithLayout(
+					"shared/views/layouts/main",
+					route.ViewPath,
+					templateData,
+				)
+				if err != nil {
+					log.Printf("Error rendering template %s: %v", route.ViewPath, err)
+					http.Error(w, "Failed to render template", http.StatusInternalServerError)
+					return
+				}
+				// Write HTML response
+				w.Header().Set("Content-Type", "text/html")
+				w.Write([]byte(html))
+				return
+			} else {
+				// No link and no view - just return success
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprintf(w, `{"success": true, "message": "Route processed"}`)
+				return
+			}
+		}
+
+		// Extract path parameters from URL
+		pathParams := extractPathParameters(r.URL.Path, route.Path, domainName)
 
 		// Extract request body for POST/PUT requests
 		var payload string
@@ -100,16 +124,72 @@ func createRouteHandler(route parser.Route, domainName string, frameworkServer *
 				http.Error(w, "Failed to read request body", http.StatusBadRequest)
 				return
 			}
-			payload = string(body)
+
+			// Parse existing payload and add path params
+			var payloadData map[string]any
+			if len(body) > 0 {
+				if err := json.Unmarshal(body, &payloadData); err != nil {
+					// If not JSON, treat as form data
+					payloadData = make(map[string]any)
+					if err := r.ParseForm(); err == nil {
+						for k, v := range r.Form {
+							if len(v) == 1 {
+								payloadData[k] = v[0]
+							} else {
+								payloadData[k] = v
+							}
+						}
+					}
+				}
+			} else {
+				// Parse form data for POST requests
+				if err := r.ParseForm(); err == nil {
+					payloadData = make(map[string]any)
+					for k, v := range r.Form {
+						if len(v) == 1 {
+							payloadData[k] = v[0]
+						} else {
+							payloadData[k] = v
+						}
+					}
+				} else {
+					payloadData = make(map[string]any)
+				}
+			}
+
+			// Add path parameters to payload
+			for k, v := range pathParams {
+				payloadData[k] = v
+			}
+
+			payloadBytes, _ := json.Marshal(payloadData)
+			payload = string(payloadBytes)
 		} else {
-			// For GET/DELETE, include query parameters
-			payload = fmt.Sprintf(`{"query": "%s"}`, r.URL.RawQuery)
+			// For GET/DELETE, include query parameters and path parameters
+			data := make(map[string]any)
+
+			// Add query parameters
+			for k, v := range r.URL.Query() {
+				if len(v) == 1 {
+					data[k] = v[0]
+				} else {
+					data[k] = v
+				}
+			}
+
+			// Add path parameters
+			for k, v := range pathParams {
+				data[k] = v
+			}
+
+			payloadBytes, _ := json.Marshal(data)
+			payload = string(payloadBytes)
 		}
 
 		// Create domain message
 		domainMsg := &DomainMessage{
 			Domain:    domainName,
-			Type:      route.Link, // Use the link as the message type
+			Type:      route.Link,
 			Payload:   payload,
 			RequestId: fmt.Sprintf("http-%d", time.Now().UnixNano()),
 		}
@@ -123,6 +203,17 @@ func createRouteHandler(route parser.Route, domainName string, frameworkServer *
 			http.Error(w, "Failed to process request", http.StatusInternalServerError)
 			return
 		}
+
+		fmt.Printf("📤 Response received:\n")
+		fmt.Printf("   Type: %T\n", response)
+		fmt.Printf("   Value: %+v\n", response)
+		fmt.Printf("   JSON: %s\n", func() string {
+			if jsonBytes, err := json.MarshalIndent(response, "", "  "); err == nil {
+				return string(jsonBytes)
+			}
+			return "Failed to marshal to JSON"
+		}())
+		fmt.Println("========================================")
 
 		if route.View != "" && route.ViewPath != "" {
 			var templateData any
@@ -138,7 +229,6 @@ func createRouteHandler(route parser.Route, domainName string, frameworkServer *
 					"error":   response.Error,
 				}
 			}
-
 			html, err := appConfig.Views.RenderWithLayout(
 				"shared/views/layouts/main",
 				route.ViewPath,
@@ -149,7 +239,6 @@ func createRouteHandler(route parser.Route, domainName string, frameworkServer *
 				http.Error(w, "Failed to render template", http.StatusInternalServerError)
 				return
 			}
-
 			// Write HTML response
 			w.Header().Set("Content-Type", "text/html")
 			w.Write([]byte(html))
@@ -175,6 +264,79 @@ func createRouteHandler(route parser.Route, domainName string, frameworkServer *
 				}`, response.Error, response.RequestId)
 		}
 	}
+}
+
+// Helper function to extract request data for template context when no domain logic is needed
+func extractRequestDataForTemplate(r *http.Request, routePath, domainName string) map[string]any {
+	data := make(map[string]any)
+
+	// Extract path parameters
+	pathParams := extractPathParameters(r.URL.Path, routePath, domainName)
+	for k, v := range pathParams {
+		data[k] = v
+	}
+
+	// Add query parameters
+	for k, v := range r.URL.Query() {
+		if len(v) == 1 {
+			data[k] = v[0]
+		} else {
+			data[k] = v
+		}
+	}
+
+	// For POST/PUT, also include form data
+	if r.Method == "POST" || r.Method == "PUT" {
+		if err := r.ParseForm(); err == nil {
+			for k, v := range r.Form {
+				if len(v) == 1 {
+					data[k] = v[0]
+				} else {
+					data[k] = v
+				}
+			}
+		}
+	}
+
+	return data
+}
+
+// Helper function to extract path parameters
+func extractPathParameters(actualPath, routePath, domainName string) map[string]string {
+	params := make(map[string]string)
+
+	// Remove domain prefix from actual path
+	domainPrefix := "/" + domainName
+	if strings.HasPrefix(actualPath, domainPrefix) {
+		actualPath = strings.TrimPrefix(actualPath, domainPrefix)
+	}
+	if actualPath == "" {
+		actualPath = "/"
+	}
+
+	// Handle root path case
+	if routePath == "/" {
+		return params
+	}
+
+	// Split paths into segments
+	actualSegments := strings.Split(strings.Trim(actualPath, "/"), "/")
+	routeSegments := strings.Split(strings.Trim(routePath, "/"), "/")
+
+	// Match segments and extract parameters
+	for i, routeSegment := range routeSegments {
+		if i >= len(actualSegments) {
+			break
+		}
+
+		if strings.HasPrefix(routeSegment, "{") && strings.HasSuffix(routeSegment, "}") {
+			// This is a parameter
+			paramName := strings.Trim(routeSegment, "{}")
+			params[paramName] = actualSegments[i]
+		}
+	}
+
+	return params
 }
 
 // StartHTTPServerWithConfig starts HTTP server using the parsed configuration
@@ -338,30 +500,73 @@ func StartHTTPServerWithShutdown(frameworkServer *FrameworkServer) *http.Server 
 
 // StartBothServersWithConfig starts both servers using parsed configuration
 func StartBothServersWithConfig(appConfig *parser.AppConfig) {
-	frameworkServer := CreateFrameworkServer()
+	// --- Database Setup ---
+	dbConfig := interfaces.Config{
+		Driver:          interfaces.DatabaseDriver(appConfig.DB.Driver),
+		Host:            appConfig.DB.Host,
+		Port:            appConfig.DB.Port,
+		Username:        appConfig.DB.Username,
+		Password:        appConfig.DB.Password,
+		Database:        appConfig.DB.Database,
+		SSLMode:         appConfig.DB.SSLMode,
+		MaxOpenConns:    appConfig.DB.MaxOpenConns,
+		MaxIdleConns:    appConfig.DB.MaxIdleConns,
+		ConnMaxLifetime: time.Duration(appConfig.DB.ConnMaxLifetime) * time.Minute,
+		FilePath:        appConfig.DB.FilePath,
+	}
 
-	// Start gRPC server in goroutine
-	go StartGRPCServer(frameworkServer)
+	dbManager, err := database.NewManager(dbConfig)
+	if err != nil {
+		log.Fatalf("Failed to create database manager: %v", err)
+	}
 
-	// Start HTTP server with config-based routing (blocks)
-	server := StartHTTPServerWithConfig(appConfig, frameworkServer)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := dbManager.Connect(ctx); err != nil {
+		log.Fatalf("Failed to connect to the database: %v", err)
+	}
+	defer dbManager.Close()
+
+	db := dbManager.GetDatabase()
+
+	// --- Framework Server Setup ---
+	// Create framework server with a database executor
+	frameworkServer := &FrameworkServer{
+		db:              db,
+		dbExecutor:      database.NewDatabaseExecutor(db),
+		domainStreams:   make(map[string]FrameworkService_DomainCommunicationServer),
+		pendingRequests: make(map[string]*PendingRequest),
+	}
+	frameworkServer.startCleanupRoutine() // Start request cleanup
+
+	// --- Renderer Setup ---
 	renderer, err := views.SetupViews(appConfig.Path)
 	if err != nil {
 		log.Fatalf("Failed to setup views: %v", err)
 	}
-
 	appConfig.Views = renderer
 
-	// Wait for interrupt signal
+	// --- Start Servers ---
+	grpcServer := StartGRPCServerWithShutdown(frameworkServer)
+	httpServer := StartHTTPServerWithConfig(appConfig, frameworkServer)
+
+	// --- Graceful Shutdown ---
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	<-c
 
-	log.Println("Shutting down server...")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	log.Println("Shutting down servers...")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
 
-	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("Server shutdown error: %v", err)
+	// Shutdown HTTP server
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("HTTP server shutdown error: %v", err)
 	}
+
+	// Shutdown gRPC server
+	grpcServer.GracefulStop()
+
+	log.Println("Servers gracefully stopped.")
 }

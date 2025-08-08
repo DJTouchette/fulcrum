@@ -1,6 +1,6 @@
 // Migration utilities for TypeScript/JavaScript domains
 
-export class MigrationRunner {
+class MigrationRunner {
     constructor(domainClient) {
         this.client = domainClient;
     }
