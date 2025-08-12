@@ -116,8 +116,19 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *Framewo
 				return
 			}
 
-			// Handle the request
-			handleHTMLRouteWithSQL(w, r, capturedGroup, appConfig, frameworkServer)
+			// Determine the desired format from query params or Accept header
+			requestedFormat := determineRequestedFormat(r)
+			log.Printf("🎯 Requested format: %s", requestedFormat)
+
+			// Handle based on the requested format
+			if requestedFormat == "json" {
+				// Extract request data for JSON handling
+				requestData := extractRequestData(r, *capturedGroup.HTMLRoute)
+				handleJSONRoute(w, r, *capturedGroup.HTMLRoute, requestData, appConfig, frameworkServer)
+			} else {
+				// Default to HTML handling
+				handleHTMLRouteWithSQL(w, r, capturedGroup, appConfig, frameworkServer)
+			}
 		}
 
 		// Register the handler with Go's pattern syntax
@@ -399,49 +410,26 @@ func getAllowedMethods(routeGroups map[string][]parser.Route, pattern string) []
 	return methods
 }
 
-// determineFormat determines the desired response format from request
-func determineFormat(r *http.Request, routes []parser.Route) string {
+// determineRequestedFormat determines the desired response format from request
+func determineRequestedFormat(r *http.Request) string {
 	// Check query parameter first (?format=json)
 	if format := r.URL.Query().Get("format"); format != "" {
-		// Validate that this format exists in the routes
-		for _, route := range routes {
-			if route.Format == format {
-				return format
-			}
-		}
+		log.Printf("🔍 Format from query param: %s", format)
+		return format
 	}
 
 	// Check Accept header
 	accept := r.Header.Get("Accept")
+	log.Printf("🔍 Accept header: %s", accept)
+
 	if strings.Contains(accept, "application/json") {
-		// Look for json format in available routes
-		for _, route := range routes {
-			if route.Format == "json" {
-				return "json"
-			}
-		}
+		return "json"
 	}
 	if strings.Contains(accept, "text/html") {
-		// Look for html format in available routes
-		for _, route := range routes {
-			if route.Format == "html" {
-				return "html"
-			}
-		}
+		return "html"
 	}
 
-	// Default to html if available, otherwise first format
-	for _, route := range routes {
-		if route.Format == "html" {
-			return "html"
-		}
-	}
-
-	// If no HTML format, return the first available format
-	if len(routes) > 0 {
-		return routes[0].Format
-	}
-
+	// Default to html
 	return "html"
 }
 
@@ -458,7 +446,7 @@ func getFormatsString(routes []parser.Route) string {
 func createMultiFormatHandler(routes []parser.Route, appConfig *parser.AppConfig, frameworkServer *FrameworkServer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Determine desired format from Accept header or query parameter
-		desiredFormat := determineFormat(r, routes)
+		desiredFormat := determineRequestedFormat(r)
 
 		// Find the route for the desired format
 		var selectedRoute *parser.Route
@@ -621,26 +609,88 @@ func loadAndRenderTemplate(templatePath string, data any, renderer *views.Templa
 
 // handleJSONRoute handles JSON API responses
 func handleJSONRoute(w http.ResponseWriter, r *http.Request, route parser.Route, requestData map[string]any, appConfig *parser.AppConfig, frameworkServer *FrameworkServer) {
-	// For JSON routes, process via domain logic and return JSON
-	var responseData any = map[string]any{
-		"success": true,
-		"data":    requestData,
+	log.Printf("🔗 Processing JSON route: %s", route.View)
+
+	var responseData any
+
+	// Look for a corresponding SQL route with the same pattern and method
+	var sqlRoute *parser.Route
+	for _, domain := range appConfig.Domains {
+		for _, domainRoute := range domain.Logic.HTTP.Routes {
+			if domainRoute.Method == route.Method &&
+				domainRoute.Link == route.Link &&
+				domainRoute.Format == "sql" {
+				sqlRoute = &domainRoute
+				break
+			}
+		}
+		if sqlRoute != nil {
+			break
+		}
 	}
 
-	if frameworkServer != nil {
-		domainData, err := callDomainLogic(r, route, requestData, frameworkServer)
+	// If we found a SQL route, execute it to get data
+	if sqlRoute != nil {
+		log.Printf("🗄️ Found SQL route for JSON: %s", sqlRoute.View)
+
+		sqlData, err := executeSQL(sqlRoute, requestData, appConfig, frameworkServer)
 		if err != nil {
+			log.Printf("❌ SQL execution failed for JSON route: %v", err)
 			responseData = map[string]any{
 				"success": false,
-				"error":   err.Error(),
+				"error":   fmt.Sprintf("Database error: %v", err),
 			}
-		} else if domainData != nil {
-			responseData = domainData
+		} else {
+			log.Printf("✅ SQL data retrieved for JSON: %+v", sqlData)
+			// Return the SQL data directly, or wrap it in a success response
+			if dataArray, ok := sqlData.([]map[string]any); ok {
+				responseData = map[string]any{
+					"success": true,
+					"data":    dataArray,
+					"count":   len(dataArray),
+				}
+			} else {
+				responseData = map[string]any{
+					"success": true,
+					"data":    sqlData,
+				}
+			}
+		}
+	} else {
+		// No SQL route found, fall back to domain logic or request data
+		log.Printf("⚠️ No SQL route found for JSON route, using fallback")
+
+		if frameworkServer != nil {
+			domainData, err := callDomainLogic(r, route, requestData, frameworkServer)
+			if err != nil {
+				responseData = map[string]any{
+					"success": false,
+					"error":   err.Error(),
+				}
+			} else if domainData != nil {
+				responseData = domainData
+			} else {
+				responseData = map[string]any{
+					"success": true,
+					"data":    requestData,
+				}
+			}
+		} else {
+			responseData = map[string]any{
+				"success": true,
+				"data":    requestData,
+			}
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(responseData)
+	if err := json.NewEncoder(w).Encode(responseData); err != nil {
+		log.Printf("❌ Failed to encode JSON response: %v", err)
+		http.Error(w, "Failed to encode JSON response", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("✅ JSON response sent successfully")
 }
 
 // handleSQLRoute handles SQL template rendering (for debugging/development)
