@@ -30,7 +30,20 @@ to quickly create a Cobra application.`,
 			fmt.Println("Error getting app config:", err)
 		}
 
+		fmt.Println("=== Application Configuration ===")
 		appConfig.PrintYAML()
+		fmt.Println("================================")
+
+		// Print discovered routes
+		fmt.Println("=== Discovered Routes ===")
+		for _, domain := range appConfig.Domains {
+			fmt.Printf("Domain: %s\n", domain.Name)
+			for _, route := range domain.Logic.HTTP.Routes {
+				fmt.Printf("  %s %s -> %s (format: %s)\n",
+					route.Method, route.Link, route.ViewPath, route.Format)
+			}
+		}
+		fmt.Println("=========================")
 
 		adapters.StartBothServersWithConfig(&appConfig)
 	},

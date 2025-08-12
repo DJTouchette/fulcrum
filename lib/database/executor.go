@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"fulcrum/lib/database/interfaces"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -431,4 +432,161 @@ func (de *DatabaseExecutor) errorResponse(message string, requestID *string) ([]
 		RequestID: requestID,
 	}
 	return json.Marshal(response)
+}
+
+// ExecuteSQL executes a raw SQL query with optional parameters
+func (de *DatabaseExecutor) ExecuteSQL(ctx context.Context, sqlQuery string, params map[string]any, requestID *string) ([]byte, error) {
+	fmt.Printf("🔍 ExecuteSQL called with query: %s\n", sqlQuery)
+	fmt.Printf("📊 Parameters: %+v\n", params)
+
+	// Parse and prepare the SQL query with parameters
+	processedQuery, args, err := de.processSQLParameters(sqlQuery, params)
+	if err != nil {
+		return de.errorResponse("Failed to process SQL parameters: "+err.Error(), requestID)
+	}
+
+	fmt.Printf("🔧 Processed query: %s\n", processedQuery)
+	fmt.Printf("🎯 Args: %+v\n", args)
+
+	// Determine if this is a SELECT query or modification query
+	trimmedQuery := strings.TrimSpace(strings.ToUpper(sqlQuery))
+	isSelectQuery := strings.HasPrefix(trimmedQuery, "SELECT") ||
+		strings.HasPrefix(trimmedQuery, "WITH") ||
+		strings.HasPrefix(trimmedQuery, "SHOW")
+
+	var response OperationResponse
+	response.RequestID = requestID
+
+	if isSelectQuery {
+		// Execute SELECT query
+		rows, err := de.db.Query(ctx, processedQuery, args...)
+		if err != nil {
+			fmt.Printf("❌ SELECT Query Error: %v\n", err)
+			return de.errorResponse("Query execution failed: "+err.Error(), requestID)
+		}
+		defer rows.Close()
+
+		data, err := de.rowsToJSON(rows)
+		if err != nil {
+			fmt.Printf("❌ rowsToJSON Error: %v\n", err)
+			return de.errorResponse("Failed to convert results: "+err.Error(), requestID)
+		}
+
+		fmt.Printf("✅ SELECT query successful - Records found: %d\n", len(data))
+
+		response = OperationResponse{
+			Success: true,
+			Data:    data,
+			Count:   len(data),
+		}
+	} else {
+		// Execute modification query (INSERT, UPDATE, DELETE, etc.)
+		result, err := de.db.Exec(ctx, processedQuery, args...)
+		if err != nil {
+			fmt.Printf("❌ EXEC Query Error: %v\n", err)
+			return de.errorResponse("Query execution failed: "+err.Error(), requestID)
+		}
+
+		affected, _ := result.RowsAffected()
+		fmt.Printf("✅ EXEC query successful - Rows affected: %d\n", affected)
+
+		response = OperationResponse{
+			Success: true,
+			Count:   int(affected),
+		}
+
+		// For INSERT queries, try to get the last insert ID
+		if strings.HasPrefix(trimmedQuery, "INSERT") {
+			if id, err := result.LastInsertId(); err == nil {
+				response.Data = []map[string]any{{"last_insert_id": id}}
+			}
+		}
+	}
+
+	return json.Marshal(response)
+}
+
+// processSQLParameters converts named parameters to positional parameters and extracts values
+func (de *DatabaseExecutor) processSQLParameters(sqlQuery string, params map[string]any) (string, []any, error) {
+	if params == nil || len(params) == 0 {
+		// No parameters, return query as-is
+		return sqlQuery, []any{}, nil
+	}
+
+	var args []any
+	processedQuery := sqlQuery
+	paramIndex := 1
+
+	// Find all parameter placeholders in the format {{param_name}} or :param_name
+	// We'll support both Handlebars-style {{}} and SQL-style :param formats
+
+	// First, handle Handlebars-style parameters {{param_name}}
+	handlebarsRegex := regexp.MustCompile(`\{\{([^}]+)\}\}`)
+	processedQuery = handlebarsRegex.ReplaceAllStringFunc(processedQuery, func(match string) string {
+		// Extract parameter name (remove {{ and }})
+		paramName := strings.Trim(match, "{}")
+		paramName = strings.TrimSpace(paramName)
+
+		// Skip Handlebars helpers and conditionals
+		if strings.Contains(paramName, "#") || strings.Contains(paramName, "/") ||
+			strings.Contains(paramName, "if") || strings.Contains(paramName, "each") ||
+			strings.Contains(paramName, "unless") || strings.Contains(paramName, "with") {
+			// This is a Handlebars helper, leave it as-is
+			return match
+		}
+
+		if value, exists := params[paramName]; exists {
+			args = append(args, value)
+			placeholder := fmt.Sprintf("$%d", paramIndex)
+			paramIndex++
+			return placeholder
+		}
+
+		// Parameter not found, leave as-is
+		return match
+	})
+
+	// Then handle SQL-style parameters :param_name
+	sqlParamRegex := regexp.MustCompile(`:([a-zA-Z_][a-zA-Z0-9_]*)`)
+	processedQuery = sqlParamRegex.ReplaceAllStringFunc(processedQuery, func(match string) string {
+		// Extract parameter name (remove :)
+		paramName := strings.TrimPrefix(match, ":")
+
+		if value, exists := params[paramName]; exists {
+			args = append(args, value)
+			placeholder := fmt.Sprintf("$%d", paramIndex)
+			paramIndex++
+			return placeholder
+		}
+
+		// Parameter not found, leave as-is (might be a PostgreSQL operator like ::)
+		return match
+	})
+
+	return processedQuery, args, nil
+}
+
+// ExecuteSQLTemplate renders a SQL template and executes it
+func (de *DatabaseExecutor) ExecuteSQLTemplate(ctx context.Context, sqlTemplate string, templateData map[string]any, requestID *string) ([]byte, error) {
+	fmt.Printf("🎨 ExecuteSQLTemplate called\n")
+	fmt.Printf("📝 Template: %s\n", sqlTemplate)
+	fmt.Printf("📊 Template Data: %+v\n", templateData)
+
+	// For now, we'll treat the sqlTemplate as the actual SQL
+	// In a real implementation, you'd render the template first
+	// using your template engine, then execute the resulting SQL
+
+	// Extract parameters from template data for SQL parameter injection
+	params := make(map[string]any)
+	if templateData != nil {
+		for k, v := range templateData {
+			// Skip complex objects, only use simple values as SQL parameters
+			switch v.(type) {
+			case string, int, int64, float64, bool, nil:
+				params[k] = v
+			}
+		}
+	}
+
+	return de.ExecuteSQL(ctx, sqlTemplate, params, requestID)
 }

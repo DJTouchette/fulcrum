@@ -2,93 +2,501 @@ package parser
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+
+	views "fulcrum/lib/views"
 
 	"gopkg.in/yaml.v2"
 )
 
-func FindDomainFiles(root string) ([]string, error) {
-	var paths []string
-
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if !d.IsDir() && d.Name() == DomainConfigFileName {
-			paths = append(paths, path)
-		}
-
-		return nil
-	})
-
-	return paths, err
+// AppConfig represents the complete application configuration
+type AppConfig struct {
+	Domains []DomainConfig `yaml:"domains"`
+	DB      DBConfig       `yaml:"db"`
+	Path    string         `yaml:"path"`
+	Views   *views.TemplateRenderer
 }
 
-func getDomainName(path string) string {
-	splitPath := strings.Split(path, "/")
-	domainName := splitPath[len(splitPath)-2]
-	return domainName
+// DBConfig holds database configuration
+type DBConfig struct {
+	Driver          string `yaml:"driver"` // postgres, mysql, sqlite
+	Host            string `yaml:"host"`
+	Port            int    `yaml:"port"`
+	Database        string `yaml:"database"`
+	Username        string `yaml:"username"`
+	Password        string `yaml:"password"`
+	SSLMode         string `yaml:"ssl_mode"`
+	MaxOpenConns    int    `yaml:"max_open_conns"`
+	MaxIdleConns    int    `yaml:"max_idle_conns"`
+	ConnMaxLifetime int    `yaml:"conn_max_lifetime_minutes"`
+	// SQLite specific
+	FilePath string `yaml:"file_path"`
 }
 
+// DomainConfig represents a single domain configuration
+type DomainConfig struct {
+	Models   []ModelDefinition `yaml:"models"`
+	Logic    LogicConfig       `yaml:"logic"`
+	Name     string            `yaml:"name"`
+	Path     string            `yaml:"path"`
+	ViewPath string            `yaml:"viewpath"`
+}
+
+// ModelDefinition defines data models for a domain
+type ModelDefinition map[string]Model
+
+// Model defines the structure of a data model
+type Model map[string]Field
+
+// Field defines a single field in a model
+type Field struct {
+	Type        string       `yaml:"type"`
+	Validations []Validation `yaml:"validations"`
+}
+
+// Validation defines validation rules for fields
+type Validation map[string]any
+
+// LogicConfig defines the business logic configuration
+type LogicConfig struct {
+	HTTP HTTPConfig `yaml:"http"`
+}
+
+// HTTPConfig defines HTTP routing configuration
+type HTTPConfig struct {
+	Restful bool    `yaml:"restful"`
+	Routes  []Route `yaml:"routes"`
+}
+
+// Route defines a single HTTP route
+type Route struct {
+	Method   string `yaml:"method"`   // HTTP method: GET, POST, etc.
+	Link     string `yaml:"link"`     // URL pattern: /users/:id
+	View     string `yaml:"view"`     // Template filename: get.html.hbs
+	Path     string `yaml:"path"`     // Unique route identifier
+	ViewPath string `yaml:"viewpath"` // Full path to template file
+	Format   string `yaml:"format"`   // Response format: html, json, sql
+}
+
+// GetAppConfig parses the application configuration from the file system
 func GetAppConfig(root string) (AppConfig, error) {
-	domainPaths, err := FindDomainFiles(root)
-	if err != nil {
-		return AppConfig{}, err
-	}
-
-	domains := []DomainConfig{}
-
-	for _, domainPath := range domainPaths {
-		domainFile, err := os.ReadFile(domainPath)
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
-
-		var domainConfig DomainConfig
-		ymlParseErr := yaml.Unmarshal(domainFile, &domainConfig)
-
-		if ymlParseErr != nil {
-			fmt.Println(ymlParseErr)
-			continue
-		}
-
-		domainDir := filepath.Dir(domainPath)
-		relativeDomainPath, err := filepath.Rel(root, domainDir)
-		if err != nil {
-			fmt.Printf("Error getting relative path: %v\n", err)
-			continue
-		}
-
-		domainConfig.ViewPath = filepath.Join(relativeDomainPath, "views")
-		domainConfig.Name = getDomainName(domainPath)
-		domainConfig.Path = domainPath
-
-		for i := range domainConfig.Logic.HTTP.Routes {
-			route := &domainConfig.Logic.HTTP.Routes[i]
-			route.ViewPath = filepath.Join(domainConfig.ViewPath, route.View)
-		}
-
-		domains = append(domains, domainConfig)
-	}
-
-	mainConfigFile, err := os.ReadFile(root + "/" + DomainConfigFileName)
+	// Load main config
+	mainConfigPath := filepath.Join(root, DomainConfigFileName)
+	mainConfigFile, err := os.ReadFile(mainConfigPath)
 	if err != nil {
 		return AppConfig{}, fmt.Errorf("failed to read main config file: %w", err)
 	}
 
 	var appConfig AppConfig
-
-	ymlParseErr := yaml.Unmarshal(mainConfigFile, &appConfig)
-	if ymlParseErr != nil {
-		return AppConfig{}, fmt.Errorf("failed to parse main config file: %w", ymlParseErr)
+	if err := yaml.Unmarshal(mainConfigFile, &appConfig); err != nil {
+		return AppConfig{}, fmt.Errorf("failed to parse main config file: %w", err)
 	}
+
+	// Discover and parse domains
+	domains, err := discoverDomains(root)
+	if err != nil {
+		return AppConfig{}, fmt.Errorf("failed to discover domains: %w", err)
+	}
+
 	appConfig.Domains = domains
 	appConfig.Path = root
-
 	return appConfig, nil
+}
+
+// discoverDomains scans the domains directory and builds domain configurations
+func discoverDomains(root string) ([]DomainConfig, error) {
+	domainsDir := filepath.Join(root, "domains")
+
+	// Check if domains directory exists
+	if _, err := os.Stat(domainsDir); os.IsNotExist(err) {
+		return []DomainConfig{}, nil // No domains directory, return empty
+	}
+
+	var domains []DomainConfig
+
+	// Walk through each domain directory
+	entries, err := os.ReadDir(domainsDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read domains directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		domainPath := filepath.Join(domainsDir, entry.Name())
+		domain, err := parseDomain(root, domainPath, entry.Name())
+		if err != nil {
+			fmt.Printf("Warning: failed to parse domain %s: %v\n", entry.Name(), err)
+			continue
+		}
+
+		domains = append(domains, domain)
+	}
+
+	return domains, nil
+}
+
+// parseDomain creates a DomainConfig from a domain directory
+func parseDomain(root, domainPath, domainName string) (DomainConfig, error) {
+	domain := DomainConfig{
+		Name:     domainName,
+		Path:     domainPath,
+		ViewPath: filepath.Join("domains", domainName, "views"),
+	}
+
+	// Load domain-specific config if it exists
+	configPath := filepath.Join(domainPath, DomainConfigFileName)
+	if _, err := os.Stat(configPath); err == nil {
+		configFile, err := os.ReadFile(configPath)
+		if err != nil {
+			return domain, fmt.Errorf("failed to read domain config: %w", err)
+		}
+
+		if err := yaml.Unmarshal(configFile, &domain); err != nil {
+			return domain, fmt.Errorf("failed to parse domain config: %w", err)
+		}
+	}
+
+	// Discover routes from file system
+	routes, err := discoverRoutes(root, domainPath, domainName)
+	if err != nil {
+		return domain, fmt.Errorf("failed to discover routes: %w", err)
+	}
+
+	domain.Logic.HTTP.Routes = routes
+	domain.Logic.HTTP.Restful = true // Enable RESTful routing by default
+
+	return domain, nil
+}
+
+// discoverRoutes scans the domain directory for route files and builds route configurations
+func discoverRoutes(root, domainPath, domainName string) ([]Route, error) {
+	var routes []Route
+
+	// Walk through the domain directory looking for route files
+	err := filepath.Walk(domainPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories and non-route files
+		if info.IsDir() || !isRouteFile(path) {
+			return nil
+		}
+
+		route, err := parseRouteFromPath(root, domainPath, domainName, path)
+		if err != nil {
+			fmt.Printf("Warning: failed to parse route from %s: %v\n", path, err)
+			return nil
+		}
+
+		routes = append(routes, route)
+		return nil
+	})
+
+	return routes, err
+}
+
+// isRouteFile determines if a file represents a route handler
+func isRouteFile(path string) bool {
+	// Look for files like: get.html.hbs, post.json.hbs, etc.
+	filename := filepath.Base(path)
+
+	// Pattern: {method}.{format}.hbs or {method}.{format}.handlebars
+	patterns := []string{
+		`^(get|post|put|patch|delete|head|options)\.(html|json|xml|sql|text)\.(hbs|handlebars)$`,
+	}
+
+	for _, pattern := range patterns {
+		if matched, _ := regexp.MatchString(pattern, strings.ToLower(filename)); matched {
+			return true
+		}
+	}
+
+	return false
+}
+
+// parseRouteFromPath creates a Route configuration from a file path
+func parseRouteFromPath(root, domainPath, domainName, filePath string) (Route, error) {
+	// Get relative path from domain root
+	relPath, err := filepath.Rel(domainPath, filePath)
+	if err != nil {
+		return Route{}, err
+	}
+
+	// Parse the file structure to determine route
+	dir := filepath.Dir(relPath)
+	filename := filepath.Base(relPath)
+
+	// Extract method and format from filename (e.g., "get.html.hbs" -> method="get", format="html")
+	parts := strings.Split(filename, ".")
+	if len(parts) < 3 {
+		return Route{}, fmt.Errorf("invalid route file format: %s", filename)
+	}
+
+	method := strings.ToUpper(parts[0])
+	format := parts[1]
+
+	// Build the URL path with proper handling
+	urlPath := buildURLPath(domainName, dir)
+
+	// Create a unique identifier for this route that includes format
+	routeID := fmt.Sprintf("%s_%s_%s", method, strings.ReplaceAll(urlPath, "/", "_"), format)
+
+	// Create the route
+	route := Route{
+		Method:   method,
+		Link:     urlPath,
+		View:     filename,
+		Path:     routeID, // Use unique ID instead of file path
+		ViewPath: filePath,
+		Format:   format,
+	}
+
+	return route, nil
+}
+
+// buildURLPath converts a file system path to a URL path with correct parameter handling
+func buildURLPath(domainName, dir string) string {
+	// Handle the root index case
+	if dir == "." || dir == "" || dir == "index" {
+		return "/" + domainName
+	}
+
+	parts := []string{domainName}
+
+	// Split the directory path and process each part
+	pathParts := strings.Split(strings.Trim(dir, "/"), "/")
+	for _, part := range pathParts {
+		if part == "" || part == "." {
+			continue
+		}
+
+		// Handle index directory - don't add it to URL
+		if part == "index" {
+			continue
+		}
+
+		// Convert [param] to :param for URL parameters
+		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
+			param := strings.Trim(part, "[]")
+			parts = append(parts, ":"+param)
+		} else {
+			parts = append(parts, part)
+		}
+	}
+
+	return "/" + strings.Join(parts, "/")
+}
+
+// Model helper methods
+func (dc *DomainConfig) GetModel(name string) (Model, bool) {
+	for _, modelDef := range dc.Models {
+		if model, exists := modelDef[name]; exists {
+			return model, true
+		}
+	}
+	return nil, false
+}
+
+func (m Model) GetField(fieldName string) (Field, bool) {
+	field, exists := m[fieldName]
+	return field, exists
+}
+
+func (f Field) GetValidation(validationType string) (any, bool) {
+	for _, validation := range f.Validations {
+		if val, exists := validation[validationType]; exists {
+			return val, true
+		}
+	}
+	return nil, false
+}
+
+func (f Field) IsNullable() bool {
+	if nullable, exists := f.GetValidation(Nullable); exists {
+		if val, ok := nullable.(bool); ok {
+			return val
+		}
+	}
+	return true
+}
+
+func (f Field) GetLengthConstraints() (min, max int, hasConstraints bool) {
+	if lengthVal, exists := f.GetValidation(ValidateLength); exists {
+		if lengthMap, ok := lengthVal.(map[string]any); ok {
+			var minVal, maxVal int
+			var hasMin, hasMax bool
+			if minInterface, exists := lengthMap[ValidateLengthMin]; exists {
+				if minInt, ok := minInterface.(int); ok {
+					minVal = minInt
+					hasMin = true
+				}
+			}
+			if maxInterface, exists := lengthMap[ValidateLengthMax]; exists {
+				if maxInt, ok := maxInterface.(int); ok {
+					maxVal = maxInt
+					hasMax = true
+				}
+			}
+			if hasMin || hasMax {
+				return minVal, maxVal, true
+			}
+		}
+	}
+	return 0, 0, false
+}
+
+// Template discovery functions for the view system
+func (dc *DomainConfig) GetTemplateDirectories(rootPath string) []string {
+	var dirs []string
+
+	// Domain-specific views
+	domainViewsPath := filepath.Join(rootPath, "domains", dc.Name, "views")
+	if _, err := os.Stat(domainViewsPath); err == nil {
+		dirs = append(dirs, domainViewsPath)
+	}
+
+	return dirs
+}
+
+// GetAllTemplateDirectories returns all template directories for the app
+func (ac *AppConfig) GetAllTemplateDirectories() []string {
+	var allDirs []string
+
+	// Add shared templates first (lower priority)
+	sharedPath := filepath.Join(ac.Path, "shared", "views")
+	if _, err := os.Stat(sharedPath); err == nil {
+		allDirs = append(allDirs, sharedPath)
+	}
+
+	// Add domain-specific templates (higher priority)
+	for _, domain := range ac.Domains {
+		dirs := domain.GetTemplateDirectories(ac.Path)
+		allDirs = append(allDirs, dirs...)
+	}
+
+	return allDirs
+}
+
+// Utility functions for backward compatibility
+func FindDomainFiles(root string) ([]string, error) {
+	var domainFiles []string
+
+	domainsDir := filepath.Join(root, "domains")
+	entries, err := os.ReadDir(domainsDir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			configPath := filepath.Join(domainsDir, entry.Name(), DomainConfigFileName)
+			if _, err := os.Stat(configPath); err == nil {
+				domainFiles = append(domainFiles, configPath)
+			}
+		}
+	}
+
+	return domainFiles, nil
+}
+
+// getDomainName extracts domain name from path
+func getDomainName(domainPath string) string {
+	return filepath.Base(filepath.Dir(domainPath))
+}
+
+// PrintYAML prints the configuration as YAML for debugging
+func (ac *AppConfig) PrintYAML() {
+	yamlData, err := yaml.Marshal(ac)
+	if err != nil {
+		fmt.Printf("Error marshaling YAML: %v", err)
+		return
+	}
+	fmt.Print(string(yamlData))
+}
+
+// Validation and debugging functions
+func (ac *AppConfig) ValidateRoutes() error {
+	var errors []string
+
+	for _, domain := range ac.Domains {
+		for _, route := range domain.Logic.HTTP.Routes {
+			// Check if template file exists
+			if _, err := os.Stat(route.ViewPath); os.IsNotExist(err) {
+				errors = append(errors,
+					fmt.Sprintf("Missing template: %s %s -> %s",
+						route.Method, route.Link, route.ViewPath))
+			}
+
+			// Validate route pattern
+			if !strings.HasPrefix(route.Link, "/") {
+				errors = append(errors,
+					fmt.Sprintf("Invalid route pattern (must start with /): %s", route.Link))
+			}
+
+			// Validate HTTP method
+			validMethods := []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+			valid := false
+			for _, method := range validMethods {
+				if route.Method == method {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				errors = append(errors,
+					fmt.Sprintf("Invalid HTTP method: %s", route.Method))
+			}
+
+			// Validate format
+			validFormats := []string{"html", "json", "xml", "sql", "text"}
+			valid = false
+			for _, format := range validFormats {
+				if route.Format == format {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				errors = append(errors,
+					fmt.Sprintf("Invalid format: %s", route.Format))
+			}
+		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("route validation errors:\n  - %s", strings.Join(errors, "\n  - "))
+	}
+
+	return nil
+}
+
+// DebugRoutes prints detailed route information for debugging
+func (ac *AppConfig) DebugRoutes() {
+	fmt.Println("=== Route Discovery Debug ===")
+
+	for _, domain := range ac.Domains {
+		fmt.Printf("Domain: %s\n", domain.Name)
+		fmt.Printf("  Path: %s\n", domain.Path)
+		fmt.Printf("  View Path: %s\n", domain.ViewPath)
+
+		for _, route := range domain.Logic.HTTP.Routes {
+			fmt.Printf("  Route:\n")
+			fmt.Printf("    Method: %s\n", route.Method)
+			fmt.Printf("    Link: %s\n", route.Link)
+			fmt.Printf("    View: %s\n", route.View)
+			fmt.Printf("    ViewPath: %s\n", route.ViewPath)
+			fmt.Printf("    Format: %s\n", route.Format)
+			fmt.Printf("    Path: %s\n", route.Path)
+			fmt.Println()
+		}
+	}
+
+	fmt.Println("=============================")
 }

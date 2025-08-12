@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/aymerick/raymond"
 )
@@ -238,23 +239,255 @@ func (tr *TemplateRenderer) RegisterHelper(name string, helper any) {
 	raymond.RegisterHelper(name, helper)
 }
 
-// SetupViews initializes the template renderer with common helpers and loads templates
-func SetupViews(templateDir string) (*TemplateRenderer, error) {
+// SetupViewsFromConfig initializes the template renderer using the new config system
+func SetupViewsFromConfig(appConfig interface{ GetAllTemplateDirectories() []string }) (*TemplateRenderer, error) {
 	renderer := NewTemplateRenderer()
 
 	// Register common helpers
+	registerCommonHelpers(renderer)
+
+	// Load templates from all discovered directories
+	templateDirs := appConfig.GetAllTemplateDirectories()
+
+	if len(templateDirs) == 0 {
+		log.Println("Warning: No template directories found")
+		return renderer, nil
+	}
+
+	for _, dir := range templateDirs {
+		log.Printf("Loading templates from directory: %s", dir)
+		if err := renderer.LoadTemplatesRecursive(dir); err != nil {
+			log.Printf("Warning: Failed to load templates from %s: %v", dir, err)
+			// Continue loading other directories even if one fails
+		}
+	}
+
+	return renderer, nil
+}
+
+// SetupViewsForDevelopment sets up views with hot-reloading capabilities
+func SetupViewsForDevelopment(appConfig interface{ GetAllTemplateDirectories() []string }) (*TemplateRenderer, error) {
+	renderer := NewTemplateRenderer()
+	registerCommonHelpers(renderer)
+
+	// In development, we might want to reload templates on each request
+	// For now, just load them once - hot reloading can be added later
+	templateDirs := appConfig.GetAllTemplateDirectories()
+
+	for _, dir := range templateDirs {
+		if err := renderer.LoadTemplatesRecursive(dir); err != nil {
+			log.Printf("Warning: Failed to load templates from %s: %v", dir, err)
+		}
+	}
+
+	return renderer, nil
+}
+
+// registerCommonHelpers registers commonly used Handlebars helpers
+func registerCommonHelpers(renderer *TemplateRenderer) {
+	// String manipulation helpers
 	renderer.RegisterHelper("uppercase", func(str string) string {
-		return fmt.Sprintf("%s", str)
+		return strings.ToUpper(str)
 	})
 
+	renderer.RegisterHelper("lowercase", func(str string) string {
+		return strings.ToLower(str)
+	})
+
+	renderer.RegisterHelper("capitalize", func(str string) string {
+		if len(str) == 0 {
+			return str
+		}
+		return strings.ToUpper(str[:1]) + strings.ToLower(str[1:])
+	})
+
+	// Comparison helpers
 	renderer.RegisterHelper("eq", func(a, b any) bool {
 		return a == b
 	})
 
-	// Load templates from directory
+	renderer.RegisterHelper("ne", func(a, b any) bool {
+		return a != b
+	})
+
+	renderer.RegisterHelper("gt", func(a, b any) bool {
+		switch aVal := a.(type) {
+		case int:
+			if bVal, ok := b.(int); ok {
+				return aVal > bVal
+			}
+		case float64:
+			if bVal, ok := b.(float64); ok {
+				return aVal > bVal
+			}
+		}
+		return false
+	})
+
+	renderer.RegisterHelper("lt", func(a, b any) bool {
+		switch aVal := a.(type) {
+		case int:
+			if bVal, ok := b.(int); ok {
+				return aVal < bVal
+			}
+		case float64:
+			if bVal, ok := b.(float64); ok {
+				return aVal < bVal
+			}
+		}
+		return false
+	})
+
+	// Logical helpers
+	renderer.RegisterHelper("and", func(a, b bool) bool {
+		return a && b
+	})
+
+	renderer.RegisterHelper("or", func(a, b bool) bool {
+		return a || b
+	})
+
+	renderer.RegisterHelper("not", func(a bool) bool {
+		return !a
+	})
+
+	// Conditional helpers
+	renderer.RegisterHelper("if_eq", func(a, b any, options *raymond.Options) string {
+		if a == b {
+			return options.Fn()
+		}
+		return options.Inverse()
+	})
+
+	// URL/Path helpers
+	renderer.RegisterHelper("url", func(path string) string {
+		// Basic URL helper - can be enhanced with base URL logic
+		if strings.HasPrefix(path, "/") {
+			return path
+		}
+		return "/" + path
+	})
+
+	// JSON helper for client-side data
+	renderer.RegisterHelper("json", func(data any) string {
+		// This would need proper JSON marshaling
+		return fmt.Sprintf("%+v", data)
+	})
+}
+
+// LoadTemplateForRoute loads a specific template for a route if not already loaded
+func (tr *TemplateRenderer) LoadTemplateForRoute(routePath, templatePath string) error {
+	// Check if template is already loaded
+	if _, exists := tr.templates[routePath]; exists {
+		return nil
+	}
+
+	// Load the template
+	return tr.LoadTemplate(routePath, templatePath)
+}
+
+// RenderRoute renders a template specifically for a route with enhanced context
+func (tr *TemplateRenderer) RenderRoute(routeName string, data map[string]any, layoutName ...string) (string, error) {
+	// Add route-specific context
+	if data == nil {
+		data = make(map[string]any)
+	}
+
+	// Add meta information
+	data["_route"] = routeName
+	data["_timestamp"] = fmt.Sprintf("%d", 1234567890) // You'd use actual timestamp
+
+	// If layout is specified, use it
+	if len(layoutName) > 0 && layoutName[0] != "" {
+		return tr.RenderWithLayout(layoutName[0], routeName, data)
+	}
+
+	// Otherwise render directly
+	return tr.Render(routeName, data)
+}
+
+// SetupViews - keep the old function for backward compatibility
+func SetupViews(templateDir string) (*TemplateRenderer, error) {
+	renderer := NewTemplateRenderer()
+	registerCommonHelpers(renderer)
+
 	if err := renderer.LoadTemplatesRecursive(templateDir); err != nil {
 		return nil, fmt.Errorf("failed to load templates: %v", err)
 	}
 
 	return renderer, nil
+}
+
+// Enhanced template loading with better error handling and logging
+func (tr *TemplateRenderer) LoadTemplatesFromDirectories(dirs []string) error {
+	var loadedCount int
+	var errors []error
+
+	for _, dir := range dirs {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			log.Printf("Template directory does not exist: %s", dir)
+			continue
+		}
+
+		count, err := tr.loadTemplatesFromDirWithCount(dir)
+		if err != nil {
+			errors = append(errors, fmt.Errorf("failed to load from %s: %w", dir, err))
+			continue
+		}
+
+		loadedCount += count
+		log.Printf("Loaded %d templates from %s", count, dir)
+	}
+
+	log.Printf("Total templates loaded: %d", loadedCount)
+
+	if len(errors) > 0 {
+		log.Printf("Encountered %d errors while loading templates", len(errors))
+		for _, err := range errors {
+			log.Printf("  - %v", err)
+		}
+		// Return the first error, but we've already logged all of them
+		return errors[0]
+	}
+
+	return nil
+}
+
+// loadTemplatesFromDirWithCount loads templates and returns the count
+func (tr *TemplateRenderer) loadTemplatesFromDirWithCount(dir string) (int, error) {
+	count := 0
+
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() && (filepath.Ext(path) == ".hbs" || filepath.Ext(path) == ".handlebars") {
+			relPath, err := filepath.Rel(dir, path)
+			if err != nil {
+				return err
+			}
+
+			// Remove extension for template name
+			name := relPath
+			if filepath.Ext(name) == ".hbs" {
+				name = name[:len(name)-4]
+			} else if filepath.Ext(name) == ".handlebars" {
+				name = name[:len(name)-11]
+			}
+
+			// Convert path separators to forward slashes for consistent naming
+			name = strings.ReplaceAll(name, string(filepath.Separator), "/")
+
+			if err := tr.LoadTemplate(name, path); err != nil {
+				return err
+			}
+
+			count++
+		}
+
+		return nil
+	})
+
+	return count, err
 }

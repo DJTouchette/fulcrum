@@ -1,0 +1,258 @@
+<style>
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background-color: #f5f7fa;
+        padding: 2rem 1rem;
+        min-height: 100vh;
+    }
+
+    .user-profile {
+        max-width: 600px;
+        margin: 0 auto;
+    }
+    
+    .profile-card {
+        background: white;
+        border-radius: 16px;
+        padding: 2.5rem;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+        border: 1px solid #e9ecef;
+    }
+    
+    .profile-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 2rem;
+        padding-bottom: 1.5rem;
+        border-bottom: 2px solid #f1f3f4;
+    }
+    
+    .profile-header h1 {
+        margin: 0;
+        color: #2c3e50;
+        font-size: 2.2rem;
+        font-weight: 600;
+    }
+    
+    .user-id {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 25px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+    }
+    
+    .profile-info {
+        margin-bottom: 2.5rem;
+    }
+    
+    .info-item {
+        margin-bottom: 1.5rem;
+        font-size: 1.1rem;
+        display: flex;
+        align-items: center;
+    }
+    
+    .info-item:last-child {
+        margin-bottom: 0;
+    }
+    
+    .info-label {
+        color: #6c757d;
+        font-weight: 600;
+        min-width: 100px;
+        margin-right: 1rem;
+    }
+    
+    .info-value {
+        color: #2c3e50;
+    }
+    
+    .info-item a {
+        color: #667eea;
+        text-decoration: none;
+        transition: color 0.2s;
+    }
+    
+    .info-item a:hover {
+        color: #5a6fd8;
+        text-decoration: underline;
+    }
+    
+    .profile-actions {
+        display: flex;
+        gap: 1rem;
+        justify-content: center;
+    }
+    
+    .btn {
+        padding: 0.75rem 1.5rem;
+        border: none;
+        border-radius: 8px;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+        text-decoration: none;
+        display: inline-block;
+        text-align: center;
+    }
+    
+    .btn-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    
+    .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    }
+    
+    .btn-secondary {
+        background: #f8f9fa;
+        color: #6c757d;
+        border: 2px solid #e9ecef;
+    }
+    
+    .btn-secondary:hover {
+        background: #e9ecef;
+        color: #495057;
+    }
+
+    .avatar-placeholder {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 2rem;
+        font-weight: 600;
+        margin: 0 auto 1.5rem;
+    }
+
+    .no-user {
+        text-align: center;
+        padding: 3rem 1rem;
+        color: #6c757d;
+    }
+
+    .no-user h2 {
+        margin-bottom: 1rem;
+        color: #495057;
+    }
+
+    @media (max-width: 768px) {
+        .profile-card {
+            padding: 1.5rem;
+        }
+        
+        .profile-header {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 1rem;
+        }
+        
+        .profile-actions {
+            flex-direction: column;
+        }
+        
+        .info-item {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        
+        .info-label {
+            margin-bottom: 0.5rem;
+            margin-right: 0;
+        }
+    }
+</style>
+
+<div class="user-profile">
+    {{#if this}}
+        <div class="profile-card">
+            <div class="avatar-placeholder">
+                {{#if this.avatar}}
+                    <img src="{{this.avatar}}" alt="{{this.name}}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">
+                {{else}}
+                    {{substring this.name 0 2}}
+                {{/if}}
+            </div>
+            
+            <div class="profile-header">
+                <h1>{{this.name}}</h1>
+                <span class="user-id">ID: {{this.id}}</span>
+            </div>
+            
+            <div class="profile-info">
+                <div class="info-item">
+                    <span class="info-label">Email:</span>
+                    <span class="info-value">
+                        <a href="mailto:{{this.email}}">{{this.email}}</a>
+                    </span>
+                </div>
+                
+                {{#if this.age}}
+                <div class="info-item">
+                    <span class="info-label">Age:</span>
+                    <span class="info-value">{{this.age}}</span>
+                </div>
+                {{/if}}
+                
+                {{#if this.phone}}
+                <div class="info-item">
+                    <span class="info-label">Phone:</span>
+                    <span class="info-value">
+                        <a href="tel:{{this.phone}}">{{this.phone}}</a>
+                    </span>
+                </div>
+                {{/if}}
+                
+                {{#if this.location}}
+                <div class="info-item">
+                    <span class="info-label">Location:</span>
+                    <span class="info-value">{{this.location}}</span>
+                </div>
+                {{/if}}
+                
+                {{#if this.role}}
+                <div class="info-item">
+                    <span class="info-label">Role:</span>
+                    <span class="info-value">{{this.role}}</span>
+                </div>
+                {{/if}}
+                
+                {{#if this.joinDate}}
+                <div class="info-item">
+                    <span class="info-label">Member Since:</span>
+                    <span class="info-value">{{formatDate this.joinDate}}</span>
+                </div>
+                {{/if}}
+            </div>
+            
+            <div class="profile-actions">
+                <a href="/user/{{this.id}}/edit" class="btn btn-primary">Edit Profile</a>
+                <a href="/user/{{this.id}}/message" class="btn btn-secondary">Send Message</a>
+            </div>
+        </div>
+    {{else}}
+        <div class="no-user">
+            <h2>User Not Found</h2>
+            <p>The requested user profile could not be found.</p>
+            <a href="/users" class="btn btn-primary" style="margin-top: 1rem;">Back to Users</a>
+        </div>
+    {{/if}}
+</div>
+
