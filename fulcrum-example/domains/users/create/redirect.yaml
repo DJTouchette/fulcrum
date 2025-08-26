@@ -1,0 +1,3 @@
+to: "/users/{{id}}"
+status: 303
+when: "always"

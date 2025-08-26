@@ -1,18 +1,31 @@
 {
-  "name": "@fulcrum/domain",
+  "name": "@fulcrum/js",
   "version": "1.0.0",
-  "description": "Node.js domain package for Fulcrum framework",
+  "description": "JavaScript handler framework for Fulcrum",
   "main": "index.js",
+  "bin": {
+    "fulcrum-js": "bin/fulcrum-js.js"
+  },
   "scripts": {
-    "start": "node domain.js",
-    "dev": "nodemon example-domain.js"
+    "test": "node test/test.js"
   },
   "dependencies": {
-    "@grpc/grpc-js": "^1.10.0",
-    "@grpc/proto-loader": "^0.7.10",
-    "uuid": "^9.0.1"
+    "@grpc/grpc-js": "^1.9.0",
+    "@grpc/proto-loader": "^0.7.0"
   },
-  "devDependencies": {
-    "nodemon": "^3.0.2"
-  }
+  "devDependencies": {},
+  "keywords": [
+    "fulcrum",
+    "framework",
+    "handlers",
+    "grpc"
+  ],
+  "author": "Fulcrum Framework",
+  "license": "MIT",
+  "files": [
+    "lib/",
+    "bin/",
+    "proto/",
+    "index.js"
+  ]
 }

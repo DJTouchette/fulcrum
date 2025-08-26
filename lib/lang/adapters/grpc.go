@@ -46,6 +46,7 @@ type FrameworkServer struct {
 	pendingRequests map[string]*PendingRequest
 	streamMutex     sync.RWMutex
 	requestMutex    sync.RWMutex
+	processManager  *ProcessManager
 }
 
 func (s *FrameworkServer) DomainCommunication(stream FrameworkService_DomainCommunicationServer) error {

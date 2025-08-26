@@ -453,11 +453,12 @@ func (de *DatabaseExecutor) ExecuteSQL(ctx context.Context, sqlQuery string, par
 	isSelectQuery := strings.HasPrefix(trimmedQuery, "SELECT") ||
 		strings.HasPrefix(trimmedQuery, "WITH") ||
 		strings.HasPrefix(trimmedQuery, "SHOW")
+	hasReturning := strings.Contains(strings.ToUpper(sqlQuery), "RETURNING")
 
 	var response OperationResponse
 	response.RequestID = requestID
 
-	if isSelectQuery {
+	if isSelectQuery || hasReturning {
 		// Execute SELECT query
 		rows, err := de.db.Query(ctx, processedQuery, args...)
 		if err != nil {

@@ -1,7 +1,9 @@
 package parser
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -71,14 +73,23 @@ type HTTPConfig struct {
 	Routes  []Route `yaml:"routes"`
 }
 
+// RedirectRule represents a redirect configuration
+type RedirectRule struct {
+	To     string `yaml:"to"`     // Target URL pattern
+	Status int    `yaml:"status"` // HTTP status code (default: 303)
+	When   string `yaml:"when"`   // Condition: "success", "error", "always"
+}
+
 // Route defines a single HTTP route
 type Route struct {
-	Method   string `yaml:"method"`   // HTTP method: GET, POST, etc.
-	Link     string `yaml:"link"`     // URL pattern: /users/:id
-	View     string `yaml:"view"`     // Template filename: get.html.hbs
-	Path     string `yaml:"path"`     // Unique route identifier
-	ViewPath string `yaml:"viewpath"` // Full path to template file
-	Format   string `yaml:"format"`   // Response format: html, json, sql
+	Method       string       `yaml:"method"`        // HTTP method: GET, POST, etc.
+	Link         string       `yaml:"link"`          // URL pattern: /users/:id
+	View         string       `yaml:"view"`          // Template filename: get.html.hbs
+	Path         string       `yaml:"path"`          // Unique route identifier
+	ViewPath     string       `yaml:"viewpath"`      // Full path to template file
+	Format       string       `yaml:"format"`        // Response format: html, json, sql
+	Redirect     RedirectRule `yaml:"redirect"`      // Redirect configuration
+	TemplateName string       `yaml:"template_name"` // Preloaded template name
 }
 
 // GetAppConfig parses the application configuration from the file system
@@ -103,7 +114,98 @@ func GetAppConfig(root string) (AppConfig, error) {
 
 	appConfig.Domains = domains
 	appConfig.Path = root
+
+	// Discover redirect rules
+	if err := appConfig.DiscoverRedirects(); err != nil {
+		fmt.Printf("Warning: failed to discover redirects: %v\n", err)
+	}
+
+	// Note: Template preloading will happen later after the renderer is initialized
+
 	return appConfig, nil
+}
+
+// PreloadRouteTemplates loads all route templates at startup
+func (ac *AppConfig) PreloadRouteTemplates() error {
+	if ac.Views == nil {
+		return fmt.Errorf("template renderer not initialized")
+	}
+
+	log.Printf("🔄 Pre-loading route templates...")
+
+	for domainIndex, domain := range ac.Domains {
+		for routeIndex, route := range domain.Logic.HTTP.Routes {
+			// Create a predictable template name based on the route path
+			// Use a hash of the file path to ensure uniqueness and consistency
+			pathHash := fmt.Sprintf("%x", sha256.Sum256([]byte(route.ViewPath)))
+			templateName := fmt.Sprintf("route_%s", pathHash[:16]) // Use first 16 chars of hash
+
+			// Load the template with the predictable name
+			if err := ac.Views.LoadTemplate(templateName, route.ViewPath); err != nil {
+				log.Printf("⚠️ Failed to preload template %s (%s): %v", templateName, route.ViewPath, err)
+				// Don't fail completely, just log the warning
+				continue
+			}
+
+			// Store the template name back on the route for easy lookup
+			ac.Domains[domainIndex].Logic.HTTP.Routes[routeIndex].TemplateName = templateName
+
+			log.Printf("✅ Preloaded template: %s -> %s", templateName, route.ViewPath)
+		}
+	}
+
+	log.Printf("🏁 Route template preloading completed")
+	return nil
+}
+
+// DiscoverRedirects scans for redirect.yaml files and applies them to routes
+func (ac *AppConfig) DiscoverRedirects() error {
+	log.Printf("🔍 Starting redirect discovery...")
+
+	for domainIndex, domain := range ac.Domains {
+		log.Printf("🔍 Checking domain: %s", domain.Name)
+
+		for routeIndex, route := range domain.Logic.HTTP.Routes {
+			log.Printf("🔍 Checking route: %s %s", route.Method, route.Link)
+			log.Printf("🔍 Route ViewPath: %s", route.ViewPath)
+
+			// Check for redirect.yaml file in the same directory as the template
+			templateDir := filepath.Dir(route.ViewPath)
+			redirectPath := filepath.Join(templateDir, "redirect.yaml")
+
+			log.Printf("🔍 Looking for redirect file at: %s", redirectPath)
+
+			if stat, err := os.Stat(redirectPath); err == nil {
+				log.Printf("✅ Found redirect file! Size: %d bytes", stat.Size())
+
+				// Load redirect configuration
+				redirectData, err := os.ReadFile(redirectPath)
+				if err != nil {
+					log.Printf("❌ Could not read redirect file %s: %v", redirectPath, err)
+					continue
+				}
+
+				log.Printf("📄 Redirect file contents: %s", string(redirectData))
+
+				var redirectRule RedirectRule
+				if err := yaml.Unmarshal(redirectData, &redirectRule); err != nil {
+					log.Printf("❌ Could not parse redirect file %s: %v", redirectPath, err)
+					continue
+				}
+
+				log.Printf("✅ Parsed redirect rule: %+v", redirectRule)
+
+				// Apply redirect rule to the route
+				ac.Domains[domainIndex].Logic.HTTP.Routes[routeIndex].Redirect = redirectRule
+				log.Printf("📍 Applied redirect rule for %s %s: %+v", route.Method, route.Link, redirectRule)
+			} else {
+				log.Printf("🚫 No redirect file found at %s: %v", redirectPath, err)
+			}
+		}
+	}
+
+	log.Printf("🏁 Redirect discovery completed")
+	return nil
 }
 
 // discoverDomains scans the domains directory and builds domain configurations
@@ -494,6 +596,9 @@ func (ac *AppConfig) DebugRoutes() {
 			fmt.Printf("    ViewPath: %s\n", route.ViewPath)
 			fmt.Printf("    Format: %s\n", route.Format)
 			fmt.Printf("    Path: %s\n", route.Path)
+			if route.Redirect.To != "" {
+				fmt.Printf("    Redirect: %+v\n", route.Redirect)
+			}
 			fmt.Println()
 		}
 	}

@@ -1,0 +1,62 @@
+<div class="max-w-2xl mx-auto px-6 py-8">
+    <div class="bg-white/95 backdrop-blur-sm rounded-2xl p-8 shadow-2xl border border-purple-200/50">
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold bg-gradient-to-r from-purple-600 via-pink-600 to-indigo-600 bg-clip-text text-transparent mb-4">Create New User</h1>
+            <div class="w-24 h-1 bg-gradient-to-r from-purple-500 via-pink-500 to-indigo-500 rounded-full mx-auto"></div>
+        </div>
+
+        <form action="/users/create" method="POST" class="space-y-6">
+            <div class="space-y-2">
+                <label for="name" class="block text-sm font-semibold text-gray-700">
+                    Name <span class="text-red-500">*</span>
+                </label>
+                <input 
+                    type="text" 
+                    id="name" 
+                    name="name" 
+                    required
+                    class="w-full px-4 py-3 rounded-xl border-2 border-purple-200 focus:border-purple-500 focus:outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm placeholder-gray-400"
+                    placeholder="Enter full name"
+                >
+            </div>
+
+            <div class="space-y-2">
+                <label for="email" class="block text-sm font-semibold text-gray-700">
+                    Email <span class="text-red-500">*</span>
+                </label>
+                <input 
+                    type="email" 
+                    id="email" 
+                    name="email" 
+                    required
+                    class="w-full px-4 py-3 rounded-xl border-2 border-purple-200 focus:border-purple-500 focus:outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm placeholder-gray-400"
+                    placeholder="Enter email address"
+                >
+            </div>
+
+            <div class="flex flex-col sm:flex-row gap-4 pt-6">
+                <button 
+                    type="submit"
+                    class="flex-1 bg-gradient-to-r from-purple-500 via-pink-500 to-indigo-500 hover:from-purple-600 hover:via-pink-600 hover:to-indigo-600 text-white px-8 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all duration-200"
+                >
+                    Create User
+                </button>
+                <a 
+                    href="/users"
+                    class="flex-1 bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white px-8 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all duration-200 text-center"
+                >
+                    Cancel
+                </a>
+            </div>
+        </form>
+    </div>
+
+    <div class="mt-8 text-center">
+        <p class="text-gray-600">
+            Already have users? 
+            <a href="/users" class="text-purple-600 hover:text-purple-800 font-medium transition-colors">
+                View all users
+            </a>
+        </p>
+    </div>
+</div>

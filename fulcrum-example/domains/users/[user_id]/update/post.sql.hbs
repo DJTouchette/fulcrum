@@ -1,0 +1,6 @@
+UPDATE users 
+SET 
+  name = '{{name}}',
+  email = '{{email}}'
+WHERE id = {{id}}
+RETURNING id, name, email;

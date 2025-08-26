@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package handler;
+
+option go_package = "./handler";
+
+import "google/protobuf/struct.proto";
+
+// Service for handling business logic requests
+service HandlerService {
+  // Process data through JavaScript handlers
+  rpc ProcessData(HandlerRequest) returns (HandlerResponse);
+  
+  // Health check for the handler service
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// Request message for processing data through handlers
+message HandlerRequest {
+  // Domain name (e.g., "users", "orders")
+  string domain = 1;
+  
+  // Action name (e.g., "edit", "create", "list")
+  string action = 2;
+  
+  // Route information
+  string route_path = 3;
+  string method = 4;
+  
+  // Data from SQL query (if any)
+  google.protobuf.Struct sql_data = 5;
+  
+  // Request data (path params, query params, form data)
+  google.protobuf.Struct request_data = 6;
+  
+  // Additional metadata and parameters
+  map<string, string> metadata = 7;
+}
+
+// Response message with processed data
+message HandlerResponse {
+  // Whether processing was successful
+  bool success = 1;
+  
+  // Processed data to pass to template
+  google.protobuf.Struct processed_data = 2;
+  
+  // Error message if processing failed
+  string error_message = 3;
+  
+  // Additional metadata for response
+  map<string, string> metadata = 4;
+  
+  // Optional redirect information
+  RedirectInfo redirect = 5;
+}
+
+// Redirect information
+message RedirectInfo {
+  string url = 1;
+  int32 status_code = 2;
+}
+
+// Health check messages
+message HealthRequest {}
+
+message HealthResponse {
+  bool healthy = 1;
+  string version = 2;
+  string service_name = 3;
+  map<string, string> metadata = 4;
+}

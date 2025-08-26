@@ -45,7 +45,8 @@ to quickly create a Cobra application.`,
 		}
 		fmt.Println("=========================")
 
-		adapters.StartBothServersWithConfig(&appConfig)
+		// adapters.StartBothServersWithConfig(&appConfig)
+		adapters.StartBothServersWithProcessManager(&appConfig)
 	},
 }
 

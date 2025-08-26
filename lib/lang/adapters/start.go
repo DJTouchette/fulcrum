@@ -2,6 +2,7 @@ package lang_adapters
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"fulcrum/lib/database"
@@ -127,7 +128,8 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *Framewo
 				handleJSONRoute(w, r, *capturedGroup.HTMLRoute, requestData, appConfig, frameworkServer)
 			} else {
 				// Default to HTML handling
-				handleHTMLRouteWithSQL(w, r, capturedGroup, appConfig, frameworkServer)
+				// handleHTMLRouteWithSQL(w, r, capturedGroup, appConfig, frameworkServer)
+				handleHTMLRouteWithProcessManager(w, r, capturedGroup, appConfig, frameworkServer)
 			}
 		}
 
@@ -159,6 +161,100 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *Framewo
 	})
 
 	return mux
+}
+
+func extractActionFromRoute(pattern, method string) string {
+	// For /users/:user_id/edit, we want "user_id.edit" not just "edit"
+	parts := strings.Split(strings.Trim(pattern, "/"), "/")
+
+	if len(parts) <= 1 {
+		return "index"
+	}
+
+	// Skip the domain (first part), build action from remaining parts
+	actionParts := []string{}
+	for i := 1; i < len(parts); i++ {
+		part := parts[i]
+		if strings.HasPrefix(part, ":") {
+			// Convert :user_id to {user_id}
+			paramName := strings.TrimPrefix(part, ":")
+			actionParts = append(actionParts, "{"+paramName+"}")
+		} else if part != "" {
+			actionParts = append(actionParts, part)
+		}
+	}
+
+	if len(actionParts) > 0 {
+		return strings.Join(actionParts, ".")
+	}
+
+	// Fallback to method-based action
+	switch method {
+	case "GET":
+		return "show"
+	case "POST":
+		return "create"
+	case "PUT", "PATCH":
+		return "update"
+	case "DELETE":
+		return "delete"
+	default:
+		return "index"
+	}
+}
+
+func handleHTMLRouteWithProcessManager(w http.ResponseWriter, r *http.Request, group RouteGroup, appConfig *parser.AppConfig, frameworkServer *FrameworkServer) {
+	log.Printf("Processing route: %s %s", group.Method, group.Pattern)
+	requestData := extractRequestData(r, *group.HTMLRoute)
+	var templateData any = requestData
+
+	// Step 1: Execute SQL if exists
+	if group.SQLRoute != nil {
+		log.Printf("Executing SQL template: %s", group.SQLRoute.View)
+		sqlData, err := executeSQL(group.SQLRoute, requestData, appConfig, frameworkServer)
+		if err != nil {
+			log.Printf("SQL execution failed: %v", err)
+		} else {
+			templateData = sqlData
+			log.Printf("SQL data retrieved successfully")
+		}
+	}
+
+	// Step 2: Execute JavaScript handler if available
+	if frameworkServer.processManager != nil && frameworkServer.processManager.IsHandlerServiceRunning() {
+		domain := group.Domain
+		action := extractActionFromRoute(group.Pattern, group.Method)
+		log.Printf("Executing handler: %s.%s", domain, action)
+
+		processedData, err := frameworkServer.processManager.ExecuteHandler(domain, action, templateData, requestData)
+
+		if err != nil {
+			log.Printf("Handler execution failed: %v", err)
+		} else {
+			templateData = processedData
+			log.Printf("Handler processing completed successfully")
+		}
+	} else {
+		log.Printf("Handler service not available, skipping handler execution")
+	}
+
+	// Step 3: Wrap final data in vm key before rendering
+	viewModel := map[string]any{
+		"vm": map[string]any{
+			group.Domain: templateData,
+		},
+	}
+
+	// Step 4: Render template
+	html, err := loadAndRenderTemplate(group.HTMLRoute.ViewPath, viewModel, appConfig.Views)
+	if err != nil {
+		log.Printf("Template render failed: %v", err)
+		http.Error(w, "Template error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(html))
 }
 
 // calculateRouteSpecificity calculates how specific a route is
@@ -228,6 +324,19 @@ func handleHTMLRouteWithSQL(w http.ResponseWriter, r *http.Request, group RouteG
 			// This allows templates to use {{#each this}} for the data array
 			templateData = sqlData
 			log.Printf("📦 SQL data set as template data: %+v", sqlData)
+
+			// Check if this is a POST/PUT/PATCH with successful data - redirect to show page
+			if (r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH") && sqlData != nil {
+				if dataArray, ok := sqlData.([]map[string]any); ok && len(dataArray) > 0 {
+					if id, exists := dataArray[0]["id"]; exists {
+						// Extract the base pattern for redirect
+						redirectURL := buildShowURL(group.Pattern, id)
+						log.Printf("🔀 Redirecting to: %s", redirectURL)
+						http.Redirect(w, r, redirectURL, http.StatusSeeOther)
+						return
+					}
+				}
+			}
 		}
 	}
 
@@ -262,6 +371,18 @@ func handleHTMLRouteWithSQL(w http.ResponseWriter, r *http.Request, group RouteG
 	w.Write([]byte(html))
 }
 
+// buildShowURL constructs the show URL based on the create pattern
+func buildShowURL(createPattern string, id any) string {
+	// Convert /users/create to /users/:user_id pattern
+	if strings.Contains(createPattern, "/create") {
+		basePattern := strings.Replace(createPattern, "/create", "", 1)
+		return fmt.Sprintf("%s/%v", basePattern, id)
+	}
+
+	// Fallback for other patterns
+	return fmt.Sprintf("/users/%v", id)
+}
+
 // executeSQL renders the SQL template and executes it against the database
 func executeSQL(sqlRoute *parser.Route, requestData map[string]any, appConfig *parser.AppConfig, frameworkServer *FrameworkServer) (any, error) {
 	// Load and render the SQL template to generate the actual SQL query
@@ -282,6 +403,8 @@ func executeSQL(sqlRoute *parser.Route, requestData map[string]any, appConfig *p
 			return nil, fmt.Errorf("database execution failed: %w", err)
 		}
 
+		log.Printf("🔍 Raw database response: %s", string(resultJSON))
+
 		// Parse the JSON response
 		var dbResponse struct {
 			Success bool             `json:"success"`
@@ -301,9 +424,10 @@ func executeSQL(sqlRoute *parser.Route, requestData map[string]any, appConfig *p
 		}
 
 		log.Printf("✅ Database query successful: %d records", dbResponse.Count)
+		log.Printf("📦 Database response data: %+v", dbResponse.Data)
 
+		// For INSERT/UPDATE/DELETE with RETURNING, the data should be in dbResponse.Data
 		// Return the data array directly as the main template data
-		// This allows templates to use {{#each this}} directly
 		return dbResponse.Data, nil
 	}
 
@@ -320,18 +444,29 @@ func executeSQL(sqlRoute *parser.Route, requestData map[string]any, appConfig *p
 
 // loadAndRenderSQLTemplate loads a SQL template file and renders it to generate SQL
 func loadAndRenderSQLTemplate(templatePath string, data any, renderer *views.TemplateRenderer) (string, error) {
-	// Create a temporary template name based on the file path
-	tempName := fmt.Sprintf("sql_%d", time.Now().UnixNano())
+	// Create the expected template name based on path hash
+	pathHash := fmt.Sprintf("%x", sha256.Sum256([]byte(templatePath)))
+	templateName := fmt.Sprintf("route_%s", pathHash[:16])
 
-	// Load the template
-	if err := renderer.LoadTemplate(tempName, templatePath); err != nil {
-		return "", fmt.Errorf("failed to load SQL template: %w", err)
-	}
-
-	// Render the SQL template (no layout for SQL)
-	sql, err := renderer.Render(tempName, data)
+	// Try to render with the preloaded template name
+	sql, err := renderer.Render(templateName, data)
 	if err != nil {
-		return "", fmt.Errorf("failed to render SQL template: %w", err)
+		// Fallback: load the template dynamically for development
+		log.Printf("⚠️ SQL template %s not preloaded, loading dynamically: %s", templateName, templatePath)
+
+		// Create a temporary name and load it
+		tempName := fmt.Sprintf("sql_temp_%d", time.Now().UnixNano())
+
+		if loadErr := renderer.LoadTemplate(tempName, templatePath); loadErr != nil {
+			return "", fmt.Errorf("failed to load SQL template: %w", loadErr)
+		}
+
+		sql, err = renderer.Render(tempName, data)
+		if err != nil {
+			return "", fmt.Errorf("failed to render SQL template: %w", err)
+		}
+
+		// Note: We can't delete the temp template, but this should only happen in development
 	}
 
 	return sql, nil
@@ -554,18 +689,30 @@ func handleHTMLRoute(w http.ResponseWriter, r *http.Request, route parser.Route,
 
 // loadAndRenderTemplate loads a template file and renders it intelligently
 func loadAndRenderTemplate(templatePath string, data any, renderer *views.TemplateRenderer) (string, error) {
-	// Create a temporary template name based on the file path
-	tempName := fmt.Sprintf("route_%d", time.Now().UnixNano())
+	// Create the expected template name based on path hash
+	pathHash := fmt.Sprintf("%x", sha256.Sum256([]byte(templatePath)))
+	templateName := fmt.Sprintf("route_%s", pathHash[:16])
 
-	// Load the template
-	if err := renderer.LoadTemplate(tempName, templatePath); err != nil {
-		return "", fmt.Errorf("failed to load template: %w", err)
-	}
-
-	// First, render the template to see its content
-	content, err := renderer.Render(tempName, data)
+	// Try to render with the preloaded template name
+	content, err := renderer.Render(templateName, data)
 	if err != nil {
-		return "", fmt.Errorf("failed to render template: %w", err)
+		// Fallback: load the template dynamically for development
+		log.Printf("⚠️ Template %s not preloaded, loading dynamically: %s", templateName, templatePath)
+
+		// Create a temporary name and load it
+		tempName := fmt.Sprintf("temp_%d", time.Now().UnixNano())
+
+		if loadErr := renderer.LoadTemplate(tempName, templatePath); loadErr != nil {
+			return "", fmt.Errorf("failed to load template: %w", loadErr)
+		}
+
+		content, err = renderer.Render(tempName, data)
+		if err != nil {
+			return "", fmt.Errorf("failed to render template: %w", err)
+		}
+
+		// Note: We can't delete the temp template since DeleteTemplate doesn't exist
+		// But this should only happen in development when templates aren't preloaded
 	}
 
 	// Check if this is a complete HTML document
@@ -956,6 +1103,13 @@ func StartBothServersWithConfig(appConfig *parser.AppConfig) {
 		// Don't fail, just warn - some templates might be loaded dynamically
 	}
 
+	log.Println("Pre-loading route templates...")
+	if err := appConfig.PreloadRouteTemplates(); err != nil {
+		log.Printf("Warning: failed to preload route templates: %v", err)
+	} else {
+		log.Println("✅ Route templates preloaded successfully")
+	}
+
 	// --- Start Servers ---
 	log.Println("Starting gRPC server...")
 	grpcServer := StartGRPCServerWithShutdown(frameworkServer)
@@ -1139,4 +1293,99 @@ func StartHTTPServerWithShutdown(frameworkServer *FrameworkServer) *http.Server 
 	}()
 
 	return server
+}
+
+// Add this function to framework_integration.go
+func StartBothServersWithProcessManager(appConfig *parser.AppConfig) {
+	// Database setup (your existing code)
+	dbConfig := interfaces.Config{
+		Driver:          interfaces.DatabaseDriver(appConfig.DB.Driver),
+		Host:            appConfig.DB.Host,
+		Port:            appConfig.DB.Port,
+		Username:        appConfig.DB.Username,
+		Password:        appConfig.DB.Password,
+		Database:        appConfig.DB.Database,
+		SSLMode:         appConfig.DB.SSLMode,
+		MaxOpenConns:    appConfig.DB.MaxOpenConns,
+		MaxIdleConns:    appConfig.DB.MaxIdleConns,
+		ConnMaxLifetime: time.Duration(appConfig.DB.ConnMaxLifetime) * time.Minute,
+		FilePath:        appConfig.DB.FilePath,
+	}
+
+	dbManager, err := database.NewManager(dbConfig)
+	if err != nil {
+		log.Fatalf("Failed to create database manager: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := dbManager.Connect(ctx); err != nil {
+		log.Fatalf("Failed to connect to the database: %v", err)
+	}
+	defer dbManager.Close()
+
+	db := dbManager.GetDatabase()
+
+	// Framework Server Setup with Process Manager
+	frameworkServer := &FrameworkServer{
+		db:              db,
+		dbExecutor:      database.NewDatabaseExecutor(db),
+		domainStreams:   make(map[string]FrameworkService_DomainCommunicationServer),
+		pendingRequests: make(map[string]*PendingRequest),
+	}
+	frameworkServer.startCleanupRoutine()
+
+	// Initialize Process Manager for JavaScript handlers
+	if err := frameworkServer.InitializeProcessManager(appConfig.Path, true); err != nil {
+		log.Printf("Warning: Failed to initialize process manager: %v", err)
+	}
+
+	// Template setup (your existing code)
+	renderer, err := views.SetupViewsFromConfig(appConfig)
+	if err != nil {
+		log.Fatalf("Failed to setup views: %v", err)
+	}
+	appConfig.Views = renderer
+
+	// Validate and preload templates
+	if err := appConfig.ValidateRoutes(); err != nil {
+		log.Printf("Warning: Route validation issues found: %v", err)
+	}
+
+	if err := appConfig.PreloadRouteTemplates(); err != nil {
+		log.Printf("Warning: failed to preload route templates: %v", err)
+	}
+
+	// Start servers with process manager integration
+	grpcServer := StartGRPCServerWithShutdown(frameworkServer)
+	httpServer := StartHTTPServerWithProcessManager(appConfig, frameworkServer)
+
+	// Graceful shutdown
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+
+	log.Println("Application ready. Press Ctrl+C to shutdown.")
+	<-c
+
+	log.Println("Shutting down servers...")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	// Shutdown HTTP server
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("HTTP server shutdown error: %v", err)
+	}
+
+	// Shutdown gRPC server
+	grpcServer.GracefulStop()
+
+	// Stop process manager
+	if frameworkServer.processManager != nil {
+		if err := frameworkServer.processManager.StopAll(); err != nil {
+			log.Printf("Process manager shutdown error: %v", err)
+		}
+	}
+
+	log.Println("Servers gracefully stopped.")
 }

@@ -1,0 +1,91 @@
+<!-- Debug Information -->
+<div style="background: #f0f0f0; padding: 1rem; margin-bottom: 1rem; font-family: monospace; border-radius: 8px;">
+  <h4>Debug Info:</h4>
+  <p>VM exists: {{#if vm}}YES{{else}}NO{{/if}}</p>
+  <p>VM.users exists: {{#if vm.users}}YES{{else}}NO{{/if}}</p>
+  <p>VM.users length: {{vm.users.length}}</p>
+  <p>VM content: {{json vm}}</p>
+  <hr>
+  <p>Raw data dump:</p>
+  <pre>{{json this}}</pre>
+</div>
+
+{{#if vm.users.[0].id}}
+  <div class="success">
+    <h1>✅ User Updated Successfully!</h1>
+    <div class="user-details">
+      <p><strong>ID:</strong> {{vm.users.[0].id}}</p>
+      <p><strong>Name:</strong> {{vm.users.[0].name}}</p>
+      <p><strong>Email:</strong> {{vm.users.[0].email}}</p>
+    </div>
+    
+    <div class="actions">
+      <a href="/users/{{vm.users.[0].id}}" class="btn btn-primary">View User</a>
+      <a href="/users/{{vm.users.[0].id}}/edit" class="btn btn-secondary">Edit Again</a>
+      <a href="/users" class="btn btn-secondary">All Users</a>
+    </div>
+  </div>
+{{else}}
+  <div class="error">
+    <h1>❌ Update Failed</h1>
+    <p>The user could not be updated. Please try again.</p>
+    <a href="/users" class="btn btn-secondary">Back to Users</a>
+  </div>
+{{/if}}
+
+<style>
+  .success {
+    max-width: 500px;
+    margin: 20px auto;
+    padding: 20px;
+    border: 2px solid #28a745;
+    border-radius: 8px;
+    background: #d4edda;
+    color: #155724;
+  }
+  
+  .error {
+    max-width: 500px;
+    margin: 20px auto;
+    padding: 20px;
+    border: 2px solid #dc3545;
+    border-radius: 8px;
+    background: #f8d7da;
+    color: #721c24;
+  }
+  
+  .user-details {
+    background: white;
+    padding: 15px;
+    border-radius: 4px;
+    margin: 15px 0;
+  }
+  
+  .actions {
+    text-align: center;
+    margin-top: 20px;
+  }
+  
+  .btn {
+    display: inline-block;
+    padding: 10px 20px;
+    margin: 0 5px;
+    text-decoration: none;
+    border-radius: 4px;
+    font-weight: bold;
+  }
+  
+  .btn-primary {
+    background: #007cba;
+    color: white;
+  }
+  
+  .btn-secondary {
+    background: #666;
+    color: white;
+  }
+  
+  .btn:hover {
+    opacity: 0.9;
+  }
+</style>
