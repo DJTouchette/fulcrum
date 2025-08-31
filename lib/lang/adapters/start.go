@@ -24,7 +24,132 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
-// CreateRouteDispatcher creates the main HTTP route multiplexer
+// HTMXRequest contains HTMX-specific request information
+type HTMXRequest struct {
+	IsHTMX         bool
+	Trigger        string
+	TriggerName    string
+	Target         string
+	CurrentURL     string
+	Prompt         string
+	Request        bool
+	Boosted        bool
+	HistoryRestore bool
+}
+
+// parseHTMXHeaders extracts HTMX-specific headers from the request
+func parseHTMXHeaders(r *http.Request) HTMXRequest {
+	return HTMXRequest{
+		IsHTMX:         r.Header.Get("HX-Request") == "true",
+		Trigger:        r.Header.Get("HX-Trigger"),
+		TriggerName:    r.Header.Get("HX-Trigger-Name"),
+		Target:         r.Header.Get("HX-Target"),
+		CurrentURL:     r.Header.Get("HX-Current-URL"),
+		Prompt:         r.Header.Get("HX-Prompt"),
+		Request:        r.Header.Get("HX-Request") == "true",
+		Boosted:        r.Header.Get("HX-Boosted") == "true",
+		HistoryRestore: r.Header.Get("HX-History-Restore-Request") == "true",
+	}
+}
+
+// setHTMXResponseHeaders sets HTMX-specific response headers
+func setHTMXResponseHeaders(w http.ResponseWriter, options map[string]string) {
+	for key, value := range options {
+		switch key {
+		case "trigger":
+			w.Header().Set("HX-Trigger", value)
+		case "trigger-after-settle":
+			w.Header().Set("HX-Trigger-After-Settle", value)
+		case "trigger-after-swap":
+			w.Header().Set("HX-Trigger-After-Swap", value)
+		case "redirect":
+			w.Header().Set("HX-Redirect", value)
+		case "refresh":
+			w.Header().Set("HX-Refresh", value)
+		case "location":
+			w.Header().Set("HX-Location", value)
+		case "push-url":
+			w.Header().Set("HX-Push-Url", value)
+		case "replace-url":
+			w.Header().Set("HX-Replace-Url", value)
+		case "reswap":
+			w.Header().Set("HX-Reswap", value)
+		case "retarget":
+			w.Header().Set("HX-Retarget", value)
+		case "reselect":
+			w.Header().Set("HX-Reselect", value)
+		}
+	}
+}
+
+// extractHTMXHeaders extracts HTMX response headers from template data
+func extractHTMXHeaders(data any) map[string]string {
+	headers := make(map[string]string)
+
+	// Check if data contains HTMX response instructions
+	if dataMap, ok := data.(map[string]any); ok {
+		if htmxData, exists := dataMap["htmx_response"]; exists {
+			if htmxMap, ok := htmxData.(map[string]any); ok {
+				for key, value := range htmxMap {
+					if strValue, ok := value.(string); ok {
+						headers[key] = strValue
+					}
+				}
+			}
+		}
+
+		// Check for common response patterns
+		if redirect, exists := dataMap["redirect_to"]; exists {
+			if redirectStr, ok := redirect.(string); ok {
+				headers["redirect"] = redirectStr
+			}
+		}
+
+		if trigger, exists := dataMap["htmx_trigger"]; exists {
+			if triggerStr, ok := trigger.(string); ok {
+				headers["trigger"] = triggerStr
+			}
+		}
+	}
+
+	return headers
+}
+
+// extractBodyContent extracts content from within <body> tags
+func extractBodyContent(html string) string {
+	// Simple regex to extract body content
+	re := regexp.MustCompile(`(?s)<body[^>]*>(.*?)</body>`)
+	matches := re.FindStringSubmatch(html)
+	if len(matches) > 1 {
+		return strings.TrimSpace(matches[1])
+	}
+	return html // Return as-is if no body tags found
+}
+
+// wrapInLayout wraps content in the main layout
+func wrapInLayout(content string, data any, renderer *views.TemplateRenderer) (string, error) {
+	layoutData := map[string]any{
+		"body": content,
+	}
+
+	if dataMap, ok := data.(map[string]any); ok {
+		for key, value := range dataMap {
+			if key != "body" {
+				layoutData[key] = value
+			}
+		}
+	}
+
+	html, err := renderer.Render("layouts/main", layoutData)
+	if err != nil {
+		log.Printf("⚠️ Layout render failed, returning content directly: %v", err)
+		return content, nil
+	}
+
+	return html, nil
+}
+
+// CreateRouteDispatcher creates the main HTTP route multiplexer with HTMX support
 func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *FrameworkServer) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -32,6 +157,14 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *Framewo
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("🏥 Health check: %s %s", r.Method, r.URL.Path)
 		fmt.Fprintf(w, "Status: OK\nTime: %s\n", time.Now().Format("2006-01-02 15:04:05"))
+	})
+
+	// HTMX static assets handler
+	mux.HandleFunc("GET /htmx.min.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("Cache-Control", "public, max-age=31536000") // 1 year cache
+		// Serve HTMX from CDN or embedded version
+		http.Redirect(w, r, "https://unpkg.com/htmx.org@1.9.10/dist/htmx.min.js", http.StatusMovedPermanently)
 	})
 
 	// Group routes by method and pattern, but only register HTML routes
@@ -106,9 +239,15 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *Framewo
 		// Capture variables in closure
 		capturedGroup := group
 
-		// Create handler function for this pattern
+		// Create handler function for this pattern with HTMX support
 		handlerFunc := func(w http.ResponseWriter, r *http.Request) {
 			log.Printf("🔍 Request: %s %s", r.Method, r.URL.Path)
+
+			// Parse HTMX headers
+			htmxReq := parseHTMXHeaders(r)
+			if htmxReq.IsHTMX {
+				log.Printf("🔄 HTMX Request detected: trigger=%s, target=%s", htmxReq.Trigger, htmxReq.Target)
+			}
 
 			// Check method
 			if r.Method != capturedGroup.Method {
@@ -127,8 +266,7 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *Framewo
 				requestData := extractRequestData(r, *capturedGroup.HTMLRoute)
 				handleJSONRoute(w, r, *capturedGroup.HTMLRoute, requestData, appConfig, frameworkServer)
 			} else {
-				// Default to HTML handling
-				// handleHTMLRouteWithSQL(w, r, capturedGroup, appConfig, frameworkServer)
+				// Handle HTML/HTMX requests
 				handleHTMLRouteWithProcessManager(w, r, capturedGroup, appConfig, frameworkServer)
 			}
 		}
@@ -205,7 +343,21 @@ func extractActionFromRoute(pattern, method string) string {
 
 func handleHTMLRouteWithProcessManager(w http.ResponseWriter, r *http.Request, group RouteGroup, appConfig *parser.AppConfig, frameworkServer *FrameworkServer) {
 	log.Printf("Processing route: %s %s", group.Method, group.Pattern)
+
+	// Parse HTMX headers
+	htmxReq := parseHTMXHeaders(r)
+
 	requestData := extractRequestData(r, *group.HTMLRoute)
+
+	// Add HTMX context to request data
+	requestData["htmx"] = map[string]any{
+		"is_htmx":     htmxReq.IsHTMX,
+		"trigger":     htmxReq.Trigger,
+		"target":      htmxReq.Target,
+		"current_url": htmxReq.CurrentURL,
+		"boosted":     htmxReq.Boosted,
+	}
+
 	var templateData any = requestData
 
 	// Step 1: Execute SQL if exists
@@ -238,25 +390,101 @@ func handleHTMLRouteWithProcessManager(w http.ResponseWriter, r *http.Request, g
 		log.Printf("Handler service not available, skipping handler execution")
 	}
 
-	// Step 3: Wrap final data in vm key before rendering
+	// Step 3: Determine template path with HTMX override support
+	templatePath := group.HTMLRoute.ViewPath
+
+	// Check for HTMX-specific template override
+	if htmxReq.IsHTMX {
+		htmxTemplatePath := strings.Replace(templatePath, ".html.hbs", ".htmx.hbs", 1)
+		if _, err := os.Stat(htmxTemplatePath); err == nil {
+			templatePath = htmxTemplatePath
+			log.Printf("🎯 Using HTMX-specific template: %s", templatePath)
+		} else {
+			log.Printf("🎯 Using regular template for HTMX (no layout): %s", templatePath)
+		}
+	}
+
+	// Step 4: Wrap final data in vm key before rendering
 	viewModel := map[string]any{
 		"vm": map[string]any{
 			group.Domain: templateData,
 			"domain":     group.Domain,
 			"group":      group,
+			"htmx":       htmxReq,
 		},
 	}
 
-	// Step 4: Render template
-	html, err := loadAndRenderTemplate(group.HTMLRoute.ViewPath, viewModel, appConfig.Views)
+	// Step 5: Render template with HTMX-aware logic
+	html, err := loadAndRenderHTMXTemplate(templatePath, viewModel, appConfig.Views, htmxReq.IsHTMX)
 	if err != nil {
 		log.Printf("Template render failed: %v", err)
 		http.Error(w, "Template error", http.StatusInternalServerError)
 		return
 	}
 
+	// Step 6: Handle HTMX response headers
+	htmxHeaders := extractHTMXHeaders(templateData)
+	setHTMXResponseHeaders(w, htmxHeaders)
+
+	// Step 7: Handle redirects for successful form submissions (non-HTMX only)
+	if (r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH") && !htmxReq.IsHTMX {
+		if dataArray, ok := templateData.([]map[string]any); ok && len(dataArray) > 0 {
+			if id, exists := dataArray[0]["id"]; exists {
+				redirectURL := buildShowURL(group.Pattern, id)
+				log.Printf("🔀 Redirecting to: %s", redirectURL)
+				http.Redirect(w, r, redirectURL, http.StatusSeeOther)
+				return
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(html))
+}
+
+// loadAndRenderHTMXTemplate renders templates with HTMX-specific logic
+func loadAndRenderHTMXTemplate(templatePath string, data any, renderer *views.TemplateRenderer, isHTMXRequest bool) (string, error) {
+	pathHash := fmt.Sprintf("%x", sha256.Sum256([]byte(templatePath)))
+	templateName := fmt.Sprintf("route_%s", pathHash[:16])
+
+	content, err := renderer.Render(templateName, data)
+	if err != nil {
+		// Fallback: load template dynamically
+		log.Printf("⚠️ Template %s not preloaded, loading dynamically: %s", templateName, templatePath)
+
+		tempName := fmt.Sprintf("temp_%d", time.Now().UnixNano())
+		if loadErr := renderer.LoadTemplate(tempName, templatePath); loadErr != nil {
+			return "", fmt.Errorf("failed to load template: %w", loadErr)
+		}
+
+		content, err = renderer.Render(tempName, data)
+		if err != nil {
+			return "", fmt.Errorf("failed to render template: %w", err)
+		}
+	}
+
+	contentTrimmed := strings.TrimSpace(content)
+	isCompleteDocument := strings.HasPrefix(strings.ToLower(contentTrimmed), "<!doctype html") ||
+		strings.HasPrefix(strings.ToLower(contentTrimmed), "<html")
+
+	if isHTMXRequest {
+		// For HTMX requests, always return content without layout
+		if isCompleteDocument {
+			log.Printf("⚠️ HTMX request received full document, extracting body content")
+			return extractBodyContent(content), nil
+		} else {
+			log.Printf("📦 Returning HTMX fragment (no layout)")
+			return content, nil
+		}
+	} else if isCompleteDocument {
+		// Return full document for regular requests
+		log.Printf("📄 Returning complete document")
+		return content, nil
+	} else {
+		// Wrap in layout for regular requests
+		log.Printf("📄 Wrapping content in layout")
+		return wrapInLayout(content, data, renderer)
+	}
 }
 
 // calculateRouteSpecificity calculates how specific a route is
@@ -301,76 +529,6 @@ type RouteGroup struct {
 	Pattern   string
 	HTMLRoute *parser.Route // The .html.hbs file for rendering
 	SQLRoute  *parser.Route // The .sql.hbs file for data fetching
-}
-
-// handleHTMLRouteWithSQL handles a route by optionally executing SQL and rendering HTML
-func handleHTMLRouteWithSQL(w http.ResponseWriter, r *http.Request, group RouteGroup, appConfig *parser.AppConfig, frameworkServer *FrameworkServer) {
-	log.Printf("🎯 Processing route: %s %s", group.Method, group.Pattern)
-
-	// Extract request data (path params, query params, etc.)
-	requestData := extractRequestData(r, *group.HTMLRoute)
-	log.Printf("📊 Request data: %+v", requestData)
-
-	var templateData any = requestData
-
-	// If there's a SQL route, execute it to get data
-	if group.SQLRoute != nil {
-		log.Printf("🗄️ Executing SQL template: %s", group.SQLRoute.View)
-
-		sqlData, err := executeSQL(group.SQLRoute, requestData, appConfig, frameworkServer)
-		if err != nil {
-			log.Printf("❌ SQL execution failed: %v", err)
-			// Continue with just request data, don't fail the whole request
-		} else {
-			// Use SQL data directly as the main template data
-			// This allows templates to use {{#each this}} for the data array
-			templateData = sqlData
-			log.Printf("📦 SQL data set as template data: %+v", sqlData)
-
-			// Check if this is a POST/PUT/PATCH with successful data - redirect to show page
-			if (r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH") && sqlData != nil {
-				if dataArray, ok := sqlData.([]map[string]any); ok && len(dataArray) > 0 {
-					if id, exists := dataArray[0]["id"]; exists {
-						// Extract the base pattern for redirect
-						redirectURL := buildShowURL(group.Pattern, id)
-						log.Printf("🔀 Redirecting to: %s", redirectURL)
-						http.Redirect(w, r, redirectURL, http.StatusSeeOther)
-						return
-					}
-				}
-			}
-		}
-	}
-
-	// Skip domain logic processing for now to keep data structure simple
-	// The SQL data should be the primary template data
-	log.Printf("🎨 Rendering HTML template: %s", group.HTMLRoute.View)
-
-	html, err := loadAndRenderTemplate(group.HTMLRoute.ViewPath, templateData, appConfig.Views)
-	if err != nil {
-		log.Printf("❌ Template render failed: %v", err)
-
-		// Return a helpful error page
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, `
-			<html>
-			<head><title>Template Error</title></head>
-			<body>
-				<h1>Template Rendering Failed</h1>
-				<p><strong>Error:</strong> %s</p>
-				<p><strong>Template:</strong> %s</p>
-				<p><strong>Template Path:</strong> %s</p>
-				<p><strong>Data Type:</strong> %T</p>
-				<p><strong>Data Preview:</strong> <pre>%+v</pre></p>
-			</body>
-			</html>
-		`, err.Error(), group.HTMLRoute.View, group.HTMLRoute.ViewPath, templateData, templateData)
-		return
-	}
-
-	log.Printf("✅ Template rendered successfully (length: %d)", len(html))
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html))
 }
 
 // buildShowURL constructs the show URL based on the create pattern
@@ -872,7 +1030,7 @@ func callDomainLogic(r *http.Request, route parser.Route, requestData map[string
 	return mockData, nil
 }
 
-// extractRequestData extracts all relevant data from the HTTP request
+// extractRequestData extracts all relevant data from the HTTP request with HTMX support
 func extractRequestData(r *http.Request, route parser.Route) map[string]any {
 	data := make(map[string]any)
 
@@ -904,6 +1062,11 @@ func extractRequestData(r *http.Request, route parser.Route) map[string]any {
 			}
 		}
 	}
+
+	// Add HTMX-specific data
+	htmxReq := parseHTMXHeaders(r)
+	data["_htmx"] = htmxReq
+	data["_is_htmx"] = htmxReq.IsHTMX
 
 	// Add request metadata
 	data["_method"] = r.Method
@@ -997,7 +1160,8 @@ func StartHTTPServerWithConfig(appConfig *parser.AppConfig, frameworkServer *Fra
 	for pattern, formats := range routeGroups {
 		fmt.Printf("   %s (formats: %s)\n", pattern, strings.Join(formats, ", "))
 	}
-	fmt.Println("   GET /health -> Health check")
+	fmt.Printf("   GET /health -> Health check\n")
+	fmt.Printf("   GET /htmx.min.js -> HTMX library\n")
 	fmt.Println()
 
 	go func() {
@@ -1195,97 +1359,39 @@ func setupHotReloading(appConfig *parser.AppConfig) error {
 	return nil
 }
 
-// Legacy functions for backward compatibility
-
-// StartGRPCServer starts the gRPC server with the given FrameworkServer (legacy)
-func StartGRPCServer(frameworkServer *FrameworkServer) {
-	listener, err := net.Listen("tcp", ":50051")
-	if err != nil {
-		log.Fatalf("Failed to listen on port 50051: %v", err)
-	}
-
-	// Create gRPC server
-	server := grpc.NewServer()
-	reflection.Register(server)
-
-	// Register the framework service
-	RegisterFrameworkServiceServer(server, frameworkServer)
-
-	log.Println("gRPC server starting on :50051")
-
-	// Start serving (this blocks)
-	if err := server.Serve(listener); err != nil {
-		log.Fatalf("Failed to serve gRPC: %v", err)
-	}
-}
-
-// StartHTTPServerWithShutdown starts HTTP server and returns server instance for shutdown control (legacy)
-func StartHTTPServerWithShutdown(frameworkServer *FrameworkServer) *http.Server {
-	mux := http.NewServeMux()
-
-	// Health check handler
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "Status: OK\nTime: %s\n", time.Now().Format("2006-01-02 15:04:05"))
-	})
-
-	// Catch-all handler
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Extract information from the HTTP request
-		domain := r.Header.Get("X-Domain")
-		if domain == "" {
-			domain = "default"
-		}
-
-		msgType := r.Header.Get("X-Message-Type")
-		if msgType == "" {
-			msgType = "http_request"
-		}
-
-		// Create payload with request info
-		payload := fmt.Sprintf(`{"method": "%s", "path": "%s", "query": "%s"}`,
-			r.Method, r.URL.Path, r.URL.RawQuery)
-
-		// Send message directly to FrameworkServer instance
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		domainMsg := &DomainMessage{
-			Domain:    domain,
-			Type:      msgType,
-			Payload:   payload,
-			RequestId: fmt.Sprintf("http-%d", time.Now().UnixNano()),
-		}
-
-		response, err := frameworkServer.SendMessage(ctx, domainMsg)
-		if err != nil {
-			log.Printf("Error processing message: %v", err)
-			fmt.Fprintf(w, "Error: Failed to process request\n")
-			return
-		}
-
-		// Return response from FrameworkServer
-		fmt.Fprintf(w, "Response from FrameworkServer:\n")
-		fmt.Fprintf(w, "Type: %s\n", response.Type)
-		fmt.Fprintf(w, "Success: %t\n", response.Success)
-		fmt.Fprintf(w, "Payload: %s\n", response.Payload)
-		if response.Error != "" {
-			fmt.Fprintf(w, "Error: %s\n", response.Error)
-		}
-	})
+// StartHTTPServerWithProcessManager starts HTTP server with HTMX and process manager support
+func StartHTTPServerWithProcessManager(appConfig *parser.AppConfig, frameworkServer *FrameworkServer) *http.Server {
+	mux := CreateRouteDispatcher(appConfig, frameworkServer)
 
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
 	}
 
-	fmt.Printf("🚀 HTTP Server starting on http://localhost%s\n", server.Addr)
-	fmt.Println("📍 Available endpoints:")
-	fmt.Println("   GET /health - Health check")
-	fmt.Println("   ANY /* - Send message to FrameworkServer")
+	fmt.Printf("🚀 HTTP Server with HTMX support starting on http://localhost%s\n", server.Addr)
+	fmt.Println("📍 Registered routes:")
+
+	// Log routes with HTMX support indication
+	routeGroups := make(map[string][]string)
+	for _, domain := range appConfig.Domains {
+		for _, route := range domain.Logic.HTTP.Routes {
+			key := fmt.Sprintf("%s %s", route.Method, route.Link)
+			routeGroups[key] = append(routeGroups[key], route.Format)
+		}
+	}
+
+	for pattern, formats := range routeGroups {
+		fmt.Printf("   %s (formats: %s, HTMX: ✓)\n", pattern, strings.Join(formats, ", "))
+	}
+	fmt.Println("   GET /health -> Health check")
+	fmt.Println("   GET /htmx.min.js -> HTMX library")
 	fmt.Println()
-	fmt.Println("💡 Use headers to control message:")
-	fmt.Println("   X-Domain: specify target domain")
-	fmt.Println("   X-Message-Type: specify message type")
+	fmt.Println("🔄 HTMX Features Enabled:")
+	fmt.Println("   - Automatic fragment detection")
+	fmt.Println("   - HTMX-specific templates (.htmx.hbs)")
+	fmt.Println("   - Regular templates without layout for HTMX")
+	fmt.Println("   - Response header management")
+	fmt.Println("   - Context injection for handlers")
 	fmt.Println()
 
 	go func() {
@@ -1390,4 +1496,106 @@ func StartBothServersWithProcessManager(appConfig *parser.AppConfig) {
 	}
 
 	log.Println("Servers gracefully stopped.")
+}
+
+// Legacy functions for backward compatibility
+
+// StartGRPCServer starts the gRPC server with the given FrameworkServer (legacy)
+func StartGRPCServer(frameworkServer *FrameworkServer) {
+	listener, err := net.Listen("tcp", ":50051")
+	if err != nil {
+		log.Fatalf("Failed to listen on port 50051: %v", err)
+	}
+
+	// Create gRPC server
+	server := grpc.NewServer()
+	reflection.Register(server)
+
+	// Register the framework service
+	RegisterFrameworkServiceServer(server, frameworkServer)
+
+	log.Println("gRPC server starting on :50051")
+
+	// Start serving (this blocks)
+	if err := server.Serve(listener); err != nil {
+		log.Fatalf("Failed to serve gRPC: %v", err)
+	}
+}
+
+// StartHTTPServerWithShutdown starts HTTP server and returns server instance for shutdown control (legacy)
+func StartHTTPServerWithShutdown(frameworkServer *FrameworkServer) *http.Server {
+	mux := http.NewServeMux()
+
+	// Health check handler
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "Status: OK\nTime: %s\n", time.Now().Format("2006-01-02 15:04:05"))
+	})
+
+	// Catch-all handler
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Extract information from the HTTP request
+		domain := r.Header.Get("X-Domain")
+		if domain == "" {
+			domain = "default"
+		}
+
+		msgType := r.Header.Get("X-Message-Type")
+		if msgType == "" {
+			msgType = "http_request"
+		}
+
+		// Create payload with request info
+		payload := fmt.Sprintf(`{"method": "%s", "path": "%s", "query": "%s"}`,
+			r.Method, r.URL.Path, r.URL.RawQuery)
+
+		// Send message directly to FrameworkServer instance
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		domainMsg := &DomainMessage{
+			Domain:    domain,
+			Type:      msgType,
+			Payload:   payload,
+			RequestId: fmt.Sprintf("http-%d", time.Now().UnixNano()),
+		}
+
+		response, err := frameworkServer.SendMessage(ctx, domainMsg)
+		if err != nil {
+			log.Printf("Error processing message: %v", err)
+			fmt.Fprintf(w, "Error: Failed to process request\n")
+			return
+		}
+
+		// Return response from FrameworkServer
+		fmt.Fprintf(w, "Response from FrameworkServer:\n")
+		fmt.Fprintf(w, "Type: %s\n", response.Type)
+		fmt.Fprintf(w, "Success: %t\n", response.Success)
+		fmt.Fprintf(w, "Payload: %s\n", response.Payload)
+		if response.Error != "" {
+			fmt.Fprintf(w, "Error: %s\n", response.Error)
+		}
+	})
+
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: mux,
+	}
+
+	fmt.Printf("🚀 HTTP Server starting on http://localhost%s\n", server.Addr)
+	fmt.Println("📍 Available endpoints:")
+	fmt.Println("   GET /health - Health check")
+	fmt.Println("   ANY /* - Send message to FrameworkServer")
+	fmt.Println()
+	fmt.Println("💡 Use headers to control message:")
+	fmt.Println("   X-Domain: specify target domain")
+	fmt.Println("   X-Message-Type: specify message type")
+	fmt.Println()
+
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("HTTP server error: %v", err)
+		}
+	}()
+
+	return server
 }

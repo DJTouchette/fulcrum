@@ -292,27 +292,6 @@ func getFieldNames(pbStruct *structpb.Struct) []string {
 // Add this field to your existing FrameworkServer:
 // processManager *ProcessManager
 
-// Create HTTP server with process manager integration
-func StartHTTPServerWithProcessManager(appConfig *parser.AppConfig, frameworkServer *FrameworkServer) *http.Server {
-	// Use your existing CreateRouteDispatcher but replace the handler function
-	mux := CreateRouteDispatcherWithProcessManager(appConfig, frameworkServer)
-
-	server := &http.Server{
-		Addr:    ":8080",
-		Handler: mux,
-	}
-
-	// Your existing logging code...
-
-	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("HTTP server error: %v", err)
-		}
-	}()
-
-	return server
-}
-
 // Modified version of your CreateRouteDispatcher
 func CreateRouteDispatcherWithProcessManager(appConfig *parser.AppConfig, frameworkServer *FrameworkServer) *http.ServeMux {
 	// Use your existing CreateRouteDispatcher code but replace:
