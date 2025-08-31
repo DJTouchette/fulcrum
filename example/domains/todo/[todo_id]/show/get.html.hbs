@@ -1,0 +1,58 @@
+<script src="https://cdn.tailwindcss.com"></script>
+
+<div class="max-w-2xl mx-auto px-6 py-8">
+    <!-- Debug Information -->
+    <div class="bg-gray-100 p-4 mb-4 rounded-lg font-mono text-sm">
+        <h4 class="font-semibold mb-2">Debug Info:</h4>
+        <p class="my-1">VM exists: {{#if vm}}<span class="text-green-600 font-medium">YES</span>{{else}}<span class="text-red-500 font-medium">NO</span>{{/if}}</p>
+        <p class="my-1">VM.todos exists: {{#if vm.todos}}<span class="text-green-600 font-medium">YES</span>{{else}}<span class="text-red-500 font-medium">NO</span>{{/if}}</p>
+        <p class="my-1">VM.todos length: <span class="font-medium">{{vm.todos.length}}</span></p>
+        <p class="my-1">VM content: <span class="text-blue-600">{{json vm}}</span></p>
+        <hr class="my-2 border-gray-300">
+        <p class="my-1">Raw data dump:</p>
+        <pre class="mt-1 text-xs">{{json this}}</pre>
+    </div>
+
+    {{#if vm.todos.[0]}}
+        <div class="text-center mb-6">
+            <h1 class="text-3xl font-bold bg-gradient-to-r from-purple-600 via-pink-600 to-indigo-600 bg-clip-text text-transparent mb-4">Todo Details</h1>
+            <div class="w-24 h-1 bg-gradient-to-r from-purple-500 via-pink-500 to-indigo-500 rounded-full mx-auto"></div>
+        </div>
+
+        <div class="bg-white/95 backdrop-blur-sm rounded-2xl p-8 shadow-2xl border border-purple-200/50">
+            <div class="space-y-6 mb-8">
+                {{#with vm.todos.[0]}}
+                    {{#each this}}
+                        <div class="flex items-center space-x-4">
+                            <div class="w-2 h-2 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full"></div>
+                            <span class="font-semibold text-gray-600">{{@key}}:</span>
+                            <span class="text-gray-800 font-medium">{{this}}</span>
+                        </div>
+                    {{/each}}
+                {{/with}}
+            </div>
+            <div class="flex flex-col sm:flex-row gap-4 pt-6">
+                <a 
+                    href="/todos/{{vm.todos.[0].id}}/edit"
+                    class="flex-1 bg-gradient-to-r from-purple-500 via-pink-500 to-indigo-500 hover:from-purple-600 hover:via-pink-600 hover:to-indigo-600 text-white px-8 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all duration-200 text-center"
+                >
+                    Edit Todo
+                </a>
+                <a 
+                    href="/todos"
+                    class="flex-1 bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white px-8 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all duration-200 text-center"
+                >
+                    Back to List
+                </a>
+            </div>
+        </div>
+    {{else}}
+        <div class="text-center py-20">
+            <h1 class="text-3xl font-bold text-gray-800 mb-4">Todo Not Found</h1>
+            <p class="text-gray-600 mb-8">The Todo you're trying to view could not be found.</p>
+            <a href="/todos" class="bg-gradient-to-r from-purple-500 to-indigo-500 text-white px-6 py-3 rounded-lg font-semibold hover:from-purple-600 hover:to-indigo-600 transition-all duration-200">
+                Back to todos List
+            </a>
+        </div>
+    {{/if}}
+</div>

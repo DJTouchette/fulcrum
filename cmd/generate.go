@@ -41,6 +41,9 @@ var generateDomain string
 func init() {
 	rootCmd.AddCommand(generateCmd)
 	generateCmd.AddCommand(generateMigrationCmd)
+	generateCmd.AddCommand(generateProjectCmd)
+	generateCmd.AddCommand(generateDomainCmd)
+	generateCmd.AddCommand(generateActionCmd)
 
 	// Flags for generate migration
 	generateMigrationCmd.Flags().StringVar(&generateDomain, "domain", "", "Domain to create the migration in (required)")

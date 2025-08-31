@@ -63,40 +63,6 @@ func (fs *FrameworkServer) shouldStartHandlerService(handlersPath string) bool {
 	return hasHandlers
 }
 
-// Check for redirect in processed data
-func checkForRedirect(data interface{}) *struct {
-	URL    string
-	Status int
-} {
-	if dataMap, ok := data.(map[string]interface{}); ok {
-		if redirectInfo, hasRedirect := dataMap["_redirect"]; hasRedirect {
-			if redirect, ok := redirectInfo.(map[string]interface{}); ok {
-				if url, hasURL := redirect["url"].(string); hasURL {
-					status := 303 // Default redirect status
-					if redirectStatus, hasStatus := redirect["status"]; hasStatus {
-						switch s := redirectStatus.(type) {
-						case int:
-							status = s
-						case float64:
-							status = int(s)
-						case string:
-							// Try to parse string to int
-							if parsed := parseStatusCode(s); parsed > 0 {
-								status = parsed
-							}
-						}
-					}
-					return &struct {
-						URL    string
-						Status int
-					}{url, status}
-				}
-			}
-		}
-	}
-	return nil
-}
-
 // Parse status code from string
 func parseStatusCode(s string) int {
 	switch s {

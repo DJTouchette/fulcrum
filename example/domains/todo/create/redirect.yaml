@@ -1,0 +1,2 @@
+redirect:
+  url: /todos/{{domainName}}_id

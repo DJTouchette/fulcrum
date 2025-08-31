@@ -1,0 +1,41 @@
+<script src="https://cdn.tailwindcss.com"></script>
+
+<div class="max-w-2xl mx-auto px-6 py-8">
+    <!-- Debug Information -->
+    <div class="bg-gray-100 p-4 mb-4 rounded-lg font-mono text-sm">
+        <h4 class="font-semibold mb-2">Debug Info:</h4>
+        <p class="my-1">VM exists: {{#if vm}}<span class="text-green-600 font-medium">YES</span>{{else}}<span class="text-red-500 font-medium">NO</span>{{/if}}</p>
+        <p class="my-1">VM.{{pluralize .DomainName}} exists: {{#if vm.{{pluralize .DomainName}}}}<span class="text-green-600 font-medium">YES</span>{{else}}<span class="text-red-500 font-medium">NO</span>{{/if}}</p>
+        <p class="my-1">VM.{{pluralize .DomainName}} length: <span class="font-medium">{{vm.{{pluralize .DomainName}}.length}}</span></p>
+        <p class="my-1">VM content: <span class="text-blue-600">{{json vm}}</span></p>
+        <hr class="my-2 border-gray-300">
+        <p class="my-1">Raw data dump:</p>
+        <pre class="mt-1 text-xs">{{json this}}</pre>
+    </div>
+
+    <div class="text-center mb-6">
+        <h1 class="text-3xl font-bold bg-gradient-to-r from-purple-600 via-pink-600 to-indigo-600 bg-clip-text text-transparent mb-4">New {{titleize .DomainName}}</h1>
+        <div class="w-24 h-1 bg-gradient-to-r from-purple-500 via-pink-500 to-indigo-500 rounded-full mx-auto"></div>
+    </div>
+
+    <div class="bg-white/95 backdrop-blur-sm rounded-2xl p-8 shadow-2xl border border-purple-200/50">
+        <form action="/{{pluralize .DomainName}}/create" method="post" class="space-y-6">
+            <!-- FORM_FIELDS_PLACEHOLDER -->
+
+            <div class="flex flex-col sm:flex-row gap-4 pt-6">
+                <button 
+                    type="submit"
+                    class="flex-1 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white px-8 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all duration-200"
+                >
+                    Create {{titleize .DomainName}}
+                </button>
+                <a 
+                    href="/{{pluralize .DomainName}}"
+                    class="flex-1 bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white px-8 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all duration-200 text-center"
+                >
+                    Cancel
+                </a>
+            </div>
+        </form>
+    </div>
+</div>

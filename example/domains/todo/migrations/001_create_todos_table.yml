@@ -1,0 +1,32 @@
+version: 1
+name: create_todos_table
+description: "Create todos table"
+
+up:
+  - create_table:
+      name: todos
+      columns:
+        - name: id
+          type: serial
+          primary_key: true
+        - name: created_at
+          type: timestamp
+          nullable: false
+          default: "NOW()"
+        - name: updated_at
+          type: timestamp
+          nullable: false
+          default: "NOW()"
+        - name: name
+          type: varchar(255)
+          nullable: true
+        - name: description
+          type: text
+          nullable: true
+        - name: completed
+          type: boolean
+          nullable: true
+
+down:
+  - drop_table:
+      name: todos

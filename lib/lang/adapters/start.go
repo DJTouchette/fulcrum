@@ -242,6 +242,8 @@ func handleHTMLRouteWithProcessManager(w http.ResponseWriter, r *http.Request, g
 	viewModel := map[string]any{
 		"vm": map[string]any{
 			group.Domain: templateData,
+			"domain":     group.Domain,
+			"group":      group,
 		},
 	}
 
