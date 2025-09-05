@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	adapters "fulcrum/lib/lang/adapters"
+	adapters "fulcrum/lib/framework"
 )
 
 // devCmd represents the dev command

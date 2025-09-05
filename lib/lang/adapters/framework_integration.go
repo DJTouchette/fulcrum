@@ -15,16 +15,16 @@ import (
 
 // Add ProcessManager to your existing FrameworkServer
 func (fs *FrameworkServer) InitializeProcessManager(appRoot string, verbose bool) error {
-	fs.processManager = NewProcessManager(appRoot, verbose)
+	fs.ProcessManager = NewProcessManager(appRoot, verbose)
 
 	// Auto-detect handler configuration
-	config := fs.processManager.AutoDetectHandlerConfig()
+	config := fs.ProcessManager.AutoDetectHandlerConfig()
 
 	log.Printf("Initializing handler service with config: %+v", config)
 
 	// Check if we should start the handler service
 	if fs.shouldStartHandlerService(config.HandlersPath) {
-		if err := fs.processManager.StartHandlerService(config); err != nil {
+		if err := fs.ProcessManager.StartHandlerService(config); err != nil {
 			log.Printf("Warning: Failed to start handler service: %v", err)
 			log.Printf("Handlers will not be available")
 			return nil // Don't fail completely, just warn
@@ -293,12 +293,12 @@ func getFieldNames(pbStruct *structpb.Struct) []string {
 // processManager *ProcessManager
 
 // Modified version of your CreateRouteDispatcher
-func CreateRouteDispatcherWithProcessManager(appConfig *parser.AppConfig, frameworkServer *FrameworkServer) *http.ServeMux {
-	// Use your existing CreateRouteDispatcher code but replace:
-	// handleHTMLRouteWithSQL with handleHTMLRouteWithProcessManager
-	//
-	// This is a conceptual function - you'd modify your existing CreateRouteDispatcher
-	// to use handleHTMLRouteWithProcessManager instead of handleHTMLRouteWithSQL
-
-	return CreateRouteDispatcher(appConfig, frameworkServer) // Your existing function
-}
+// func CreateRouteDispatcherWithProcessManager(appConfig *parser.AppConfig, frameworkServer *FrameworkServer) *http.ServeMux {
+// 	// Use your existing CreateRouteDispatcher code but replace:
+// 	// handleHTMLRouteWithSQL with handleHTMLRouteWithProcessManager
+// 	//
+// 	// This is a conceptual function - you'd modify your existing CreateRouteDispatcher
+// 	// to use handleHTMLRouteWithProcessManager instead of handleHTMLRouteWithSQL
+//
+// 	return CreateRouteDispatcher(appConfig, frameworkServer) // Your existing function
+// }

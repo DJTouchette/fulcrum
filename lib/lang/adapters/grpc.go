@@ -39,14 +39,14 @@ type PendingRequest struct {
 
 type FrameworkServer struct {
 	UnimplementedFrameworkServiceServer
-	db              interfaces.Database
-	dbExecutor      *database.DatabaseExecutor // Add DatabaseExecutor
-	messageBus      MessageBus
-	domainStreams   map[string]FrameworkService_DomainCommunicationServer
-	pendingRequests map[string]*PendingRequest
-	streamMutex     sync.RWMutex
-	requestMutex    sync.RWMutex
-	processManager  *ProcessManager
+	Db              interfaces.Database
+	DbExecutor      *database.DatabaseExecutor // Add DatabaseExecutor
+	MessageBus      MessageBus
+	DomainStreams   map[string]FrameworkService_DomainCommunicationServer
+	PendingRequests map[string]*PendingRequest
+	StreamMutex     sync.RWMutex
+	RequestMutex    sync.RWMutex
+	ProcessManager  *ProcessManager
 }
 
 func (s *FrameworkServer) DomainCommunication(stream FrameworkService_DomainCommunicationServer) error {
@@ -172,46 +172,46 @@ func (s *FrameworkServer) SendMessage(ctx context.Context, req *DomainMessage) (
 
 // Helper methods for managing domain streams
 func (s *FrameworkServer) addDomainStream(domain string, stream FrameworkService_DomainCommunicationServer) {
-	s.streamMutex.Lock()
-	defer s.streamMutex.Unlock()
-	if s.domainStreams == nil {
-		s.domainStreams = make(map[string]FrameworkService_DomainCommunicationServer)
+	s.StreamMutex.Lock()
+	defer s.StreamMutex.Unlock()
+	if s.DomainStreams == nil {
+		s.DomainStreams = make(map[string]FrameworkService_DomainCommunicationServer)
 	}
-	s.domainStreams[domain] = stream
+	s.DomainStreams[domain] = stream
 }
 
 func (s *FrameworkServer) removeDomainStream(domain string) {
-	s.streamMutex.Lock()
-	defer s.streamMutex.Unlock()
-	delete(s.domainStreams, domain)
+	s.StreamMutex.Lock()
+	defer s.StreamMutex.Unlock()
+	delete(s.DomainStreams, domain)
 }
 
 func (s *FrameworkServer) getDomainStream(domain string) FrameworkService_DomainCommunicationServer {
-	s.streamMutex.RLock()
-	defer s.streamMutex.RUnlock()
-	return s.domainStreams[domain]
+	s.StreamMutex.RLock()
+	defer s.StreamMutex.RUnlock()
+	return s.DomainStreams[domain]
 }
 
 // Helper methods for managing pending requests
 func (s *FrameworkServer) addPendingRequest(requestID string, req *PendingRequest) {
-	s.requestMutex.Lock()
-	defer s.requestMutex.Unlock()
-	if s.pendingRequests == nil {
-		s.pendingRequests = make(map[string]*PendingRequest)
+	s.RequestMutex.Lock()
+	defer s.RequestMutex.Unlock()
+	if s.PendingRequests == nil {
+		s.PendingRequests = make(map[string]*PendingRequest)
 	}
-	s.pendingRequests[requestID] = req
+	s.PendingRequests[requestID] = req
 }
 
 func (s *FrameworkServer) removePendingRequest(requestID string) {
-	s.requestMutex.Lock()
-	defer s.requestMutex.Unlock()
-	delete(s.pendingRequests, requestID)
+	s.RequestMutex.Lock()
+	defer s.RequestMutex.Unlock()
+	delete(s.PendingRequests, requestID)
 }
 
 func (s *FrameworkServer) getPendingRequest(requestID string) *PendingRequest {
-	s.requestMutex.RLock()
-	defer s.requestMutex.RUnlock()
-	return s.pendingRequests[requestID]
+	s.RequestMutex.RLock()
+	defer s.RequestMutex.RUnlock()
+	return s.PendingRequests[requestID]
 }
 
 // Check if a message type is a response (ends with "_response")
@@ -282,7 +282,7 @@ func (s *FrameworkServer) processMessage(msg *DomainMessage) *RuntimeMessage {
 			success = false
 			errMsg = fmt.Sprintf("Invalid db_create payload: %v", err)
 		} else {
-			resp, err := s.dbExecutor.CreateRecord(ctx, reqData.Table, reqData.Data, &msg.RequestId)
+			resp, err := s.DbExecutor.CreateRecord(ctx, reqData.Table, reqData.Data, &msg.RequestId)
 			if err != nil {
 				success = false
 				errMsg = fmt.Sprintf("db_create failed: %v", err)
@@ -300,7 +300,7 @@ func (s *FrameworkServer) processMessage(msg *DomainMessage) *RuntimeMessage {
 			success = false
 			errMsg = fmt.Sprintf("Invalid db_update payload: %v", err)
 		} else {
-			resp, err := s.dbExecutor.UpdateRecord(ctx, reqData.Table, reqData.ID, reqData.Data, &msg.RequestId)
+			resp, err := s.DbExecutor.UpdateRecord(ctx, reqData.Table, reqData.ID, reqData.Data, &msg.RequestId)
 			if err != nil {
 				success = false
 				errMsg = fmt.Sprintf("db_update failed: %v", err)
@@ -319,7 +319,7 @@ func (s *FrameworkServer) processMessage(msg *DomainMessage) *RuntimeMessage {
 			success = false
 			errMsg = fmt.Sprintf("Invalid db_find payload: %v", err)
 		} else {
-			resp, err := s.dbExecutor.FindRecords(ctx, reqData.Table, reqData.Query, &msg.RequestId)
+			resp, err := s.DbExecutor.FindRecords(ctx, reqData.Table, reqData.Query, &msg.RequestId)
 			if err != nil {
 				success = false
 				errMsg = fmt.Sprintf("db_find failed: %v", err)
@@ -349,22 +349,22 @@ func (s *FrameworkServer) processMessage(msg *DomainMessage) *RuntimeMessage {
 }
 
 // Cleanup routine to remove expired pending requests
-func (s *FrameworkServer) startCleanupRoutine() {
+func (s *FrameworkServer) StartCleanupRoutine() {
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 
 		for range ticker.C {
-			s.requestMutex.Lock()
+			s.RequestMutex.Lock()
 			now := time.Now()
-			for requestID, req := range s.pendingRequests {
+			for requestID, req := range s.PendingRequests {
 				if now.After(req.Timeout) {
 					log.Printf("Cleaning up expired request: %s", requestID)
 					close(req.Response)
-					delete(s.pendingRequests, requestID)
+					delete(s.PendingRequests, requestID)
 				}
 			}
-			s.requestMutex.Unlock()
+			s.RequestMutex.Unlock()
 		}
 	}()
 }
@@ -382,14 +382,14 @@ func Listen(db interfaces.Database) *FrameworkServer {
 
 	// Create framework server
 	frameworkServer := &FrameworkServer{
-		db:              db,
-		dbExecutor:      database.NewDatabaseExecutor(db), // Initialize DatabaseExecutor
-		domainStreams:   make(map[string]FrameworkService_DomainCommunicationServer),
-		pendingRequests: make(map[string]*PendingRequest),
+		Db:              db,
+		DbExecutor:      database.NewDatabaseExecutor(db), // Initialize DatabaseExecutor
+		DomainStreams:   make(map[string]FrameworkService_DomainCommunicationServer),
+		PendingRequests: make(map[string]*PendingRequest),
 	}
 
 	// Start cleanup routine
-	frameworkServer.startCleanupRoutine()
+	frameworkServer.StartCleanupRoutine()
 
 	RegisterFrameworkServiceServer(server, frameworkServer)
 

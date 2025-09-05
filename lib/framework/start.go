@@ -1,10 +1,11 @@
-package lang_adapters
+package framework
 
 import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"fulcrum/lib/auth"
 	"fulcrum/lib/database"
 	"fulcrum/lib/database/interfaces"
 	parser "fulcrum/lib/parser"
@@ -19,6 +20,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	lang_adapters "fulcrum/lib/lang/adapters"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -150,7 +153,7 @@ func wrapInLayout(content string, data any, renderer *views.TemplateRenderer) (s
 }
 
 // CreateRouteDispatcher creates the main HTTP route multiplexer with HTMX support
-func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *FrameworkServer) *http.ServeMux {
+func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *lang_adapters.FrameworkServer) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// Health check handler
@@ -241,6 +244,12 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *Framewo
 
 		// Create handler function for this pattern with HTMX support
 		handlerFunc := func(w http.ResponseWriter, r *http.Request) {
+			if !auth.IsAuthenticated(r) {
+				log.Printf("🔍 Request: %s %s has been redirected to login", r.Method, r.URL.Path)
+				http.Redirect(w, r, "/login", http.StatusSeeOther)
+				return
+			}
+
 			log.Printf("🔍 Request: %s %s", r.Method, r.URL.Path)
 
 			// Parse HTMX headers
@@ -341,7 +350,7 @@ func extractActionFromRoute(pattern, method string) string {
 	}
 }
 
-func handleHTMLRouteWithProcessManager(w http.ResponseWriter, r *http.Request, group RouteGroup, appConfig *parser.AppConfig, frameworkServer *FrameworkServer) {
+func handleHTMLRouteWithProcessManager(w http.ResponseWriter, r *http.Request, group RouteGroup, appConfig *parser.AppConfig, frameworkServer *lang_adapters.FrameworkServer) {
 	log.Printf("Processing route: %s %s", group.Method, group.Pattern)
 
 	// Parse HTMX headers
@@ -373,12 +382,12 @@ func handleHTMLRouteWithProcessManager(w http.ResponseWriter, r *http.Request, g
 	}
 
 	// Step 2: Execute JavaScript handler if available
-	if frameworkServer.processManager != nil && frameworkServer.processManager.IsHandlerServiceRunning() {
+	if frameworkServer.ProcessManager != nil && frameworkServer.ProcessManager.IsHandlerServiceRunning() {
 		domain := group.Domain
 		action := extractActionFromRoute(group.Pattern, group.Method)
 		log.Printf("Executing handler: %s.%s", domain, action)
 
-		processedData, err := frameworkServer.processManager.ExecuteHandler(domain, action, templateData, requestData)
+		processedData, err := frameworkServer.ProcessManager.ExecuteHandler(domain, action, templateData, requestData)
 
 		if err != nil {
 			log.Printf("Handler execution failed: %v", err)
@@ -544,7 +553,7 @@ func buildShowURL(createPattern string, id any) string {
 }
 
 // executeSQL renders the SQL template and executes it against the database
-func executeSQL(sqlRoute *parser.Route, requestData map[string]any, appConfig *parser.AppConfig, frameworkServer *FrameworkServer) (any, error) {
+func executeSQL(sqlRoute *parser.Route, requestData map[string]any, appConfig *parser.AppConfig, frameworkServer *lang_adapters.FrameworkServer) (any, error) {
 	// Load and render the SQL template to generate the actual SQL query
 	sqlQuery, err := loadAndRenderSQLTemplate(sqlRoute.ViewPath, requestData, appConfig.Views)
 	if err != nil {
@@ -554,10 +563,10 @@ func executeSQL(sqlRoute *parser.Route, requestData map[string]any, appConfig *p
 	log.Printf("🔍 Generated SQL query: %s", sqlQuery)
 
 	// Execute the SQL query using the database executor
-	if frameworkServer != nil && frameworkServer.dbExecutor != nil {
+	if frameworkServer != nil && frameworkServer.DbExecutor != nil {
 		// Use the real database executor
 		ctx := context.Background()
-		resultJSON, err := frameworkServer.dbExecutor.ExecuteSQL(ctx, sqlQuery, requestData, nil)
+		resultJSON, err := frameworkServer.DbExecutor.ExecuteSQL(ctx, sqlQuery, requestData, nil)
 		if err != nil {
 			log.Printf("❌ Database execution failed: %v", err)
 			return nil, fmt.Errorf("database execution failed: %w", err)
@@ -650,7 +659,7 @@ func mergeMaps(map1, map2 map[string]any) map[string]any {
 }
 
 // handleSingleRoute handles a single route request
-func handleSingleRoute(w http.ResponseWriter, r *http.Request, route parser.Route, domainName string, appConfig *parser.AppConfig, frameworkServer *FrameworkServer) {
+func handleSingleRoute(w http.ResponseWriter, r *http.Request, route parser.Route, domainName string, appConfig *parser.AppConfig, frameworkServer *lang_adapters.FrameworkServer) {
 	log.Printf("✅ Processing route: %s %s (format: %s, template: %s)",
 		route.Method, route.Link, route.Format, route.View)
 
@@ -738,7 +747,7 @@ func getFormatsString(routes []parser.Route) string {
 }
 
 // createMultiFormatHandler creates a handler that can serve different formats based on request
-func createMultiFormatHandler(routes []parser.Route, appConfig *parser.AppConfig, frameworkServer *FrameworkServer) http.HandlerFunc {
+func createMultiFormatHandler(routes []parser.Route, appConfig *parser.AppConfig, frameworkServer *lang_adapters.FrameworkServer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Determine desired format from Accept header or query parameter
 		desiredFormat := determineRequestedFormat(r)
@@ -771,7 +780,7 @@ func createMultiFormatHandler(routes []parser.Route, appConfig *parser.AppConfig
 }
 
 // handleRouteByFormat handles the request based on the route format
-func handleRouteByFormat(w http.ResponseWriter, r *http.Request, route parser.Route, appConfig *parser.AppConfig, frameworkServer *FrameworkServer) {
+func handleRouteByFormat(w http.ResponseWriter, r *http.Request, route parser.Route, appConfig *parser.AppConfig, frameworkServer *lang_adapters.FrameworkServer) {
 	// Extract path parameters and request data
 	requestData := extractRequestData(r, route)
 
@@ -788,7 +797,7 @@ func handleRouteByFormat(w http.ResponseWriter, r *http.Request, route parser.Ro
 }
 
 // handleHTMLRoute handles HTML template rendering
-func handleHTMLRoute(w http.ResponseWriter, r *http.Request, route parser.Route, requestData map[string]any, appConfig *parser.AppConfig, frameworkServer *FrameworkServer) {
+func handleHTMLRoute(w http.ResponseWriter, r *http.Request, route parser.Route, requestData map[string]any, appConfig *parser.AppConfig, frameworkServer *lang_adapters.FrameworkServer) {
 	log.Printf("🎨 Rendering HTML template: %s", route.View)
 
 	// For HTML routes, we might want to:
@@ -915,7 +924,7 @@ func loadAndRenderTemplate(templatePath string, data any, renderer *views.Templa
 }
 
 // handleJSONRoute handles JSON API responses
-func handleJSONRoute(w http.ResponseWriter, r *http.Request, route parser.Route, requestData map[string]any, appConfig *parser.AppConfig, frameworkServer *FrameworkServer) {
+func handleJSONRoute(w http.ResponseWriter, r *http.Request, route parser.Route, requestData map[string]any, appConfig *parser.AppConfig, frameworkServer *lang_adapters.FrameworkServer) {
 	log.Printf("🔗 Processing JSON route: %s", route.View)
 
 	var responseData any
@@ -1013,7 +1022,7 @@ func handleSQLRoute(w http.ResponseWriter, r *http.Request, route parser.Route, 
 }
 
 // callDomainLogic communicates with domain process for business logic
-func callDomainLogic(r *http.Request, route parser.Route, requestData map[string]any, frameworkServer *FrameworkServer) (map[string]any, error) {
+func callDomainLogic(r *http.Request, route parser.Route, requestData map[string]any, frameworkServer *lang_adapters.FrameworkServer) (map[string]any, error) {
 	// This would communicate with the domain process
 	// For now, just return the request data with some mock processing
 
@@ -1136,7 +1145,7 @@ func extractPathParameters(actualPath, routePattern string) map[string]string {
 }
 
 // StartHTTPServerWithConfig starts HTTP server using the parsed configuration
-func StartHTTPServerWithConfig(appConfig *parser.AppConfig, frameworkServer *FrameworkServer) *http.Server {
+func StartHTTPServerWithConfig(appConfig *parser.AppConfig, frameworkServer *lang_adapters.FrameworkServer) *http.Server {
 	// Create the route dispatcher with the fixed logic
 	mux := CreateRouteDispatcher(appConfig, frameworkServer)
 
@@ -1174,7 +1183,7 @@ func StartHTTPServerWithConfig(appConfig *parser.AppConfig, frameworkServer *Fra
 }
 
 // StartGRPCServerWithShutdown starts gRPC server and returns server instance for shutdown control
-func StartGRPCServerWithShutdown(frameworkServer *FrameworkServer) *grpc.Server {
+func StartGRPCServerWithShutdown(frameworkServer *lang_adapters.FrameworkServer) *grpc.Server {
 	listener, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		log.Fatalf("Failed to listen on port 50051: %v", err)
@@ -1182,7 +1191,7 @@ func StartGRPCServerWithShutdown(frameworkServer *FrameworkServer) *grpc.Server 
 
 	server := grpc.NewServer()
 	reflection.Register(server)
-	RegisterFrameworkServiceServer(server, frameworkServer)
+	lang_adapters.RegisterFrameworkServiceServer(server, frameworkServer)
 
 	log.Println("gRPC server starting on :50051")
 
@@ -1229,13 +1238,13 @@ func StartBothServersWithConfig(appConfig *parser.AppConfig) {
 	db := dbManager.GetDatabase()
 
 	// --- Framework Server Setup ---
-	frameworkServer := &FrameworkServer{
-		db:              db,
-		dbExecutor:      database.NewDatabaseExecutor(db),
-		domainStreams:   make(map[string]FrameworkService_DomainCommunicationServer),
-		pendingRequests: make(map[string]*PendingRequest),
+	frameworkServer := &lang_adapters.FrameworkServer{
+		Db:              db,
+		DbExecutor:      database.NewDatabaseExecutor(db),
+		DomainStreams:   make(map[string]lang_adapters.FrameworkService_DomainCommunicationServer),
+		PendingRequests: make(map[string]*lang_adapters.PendingRequest),
 	}
-	frameworkServer.startCleanupRoutine()
+	frameworkServer.StartCleanupRoutine()
 
 	// --- Enhanced Renderer Setup ---
 	log.Println("Setting up template renderer...")
@@ -1360,8 +1369,9 @@ func setupHotReloading(appConfig *parser.AppConfig) error {
 }
 
 // StartHTTPServerWithProcessManager starts HTTP server with HTMX and process manager support
-func StartHTTPServerWithProcessManager(appConfig *parser.AppConfig, frameworkServer *FrameworkServer) *http.Server {
+func StartHTTPServerWithProcessManager(appConfig *parser.AppConfig, frameworkServer *lang_adapters.FrameworkServer) *http.Server {
 	mux := CreateRouteDispatcher(appConfig, frameworkServer)
+	auth.AddLoginRoute(mux, frameworkServer)
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -1436,13 +1446,13 @@ func StartBothServersWithProcessManager(appConfig *parser.AppConfig) {
 	db := dbManager.GetDatabase()
 
 	// Framework Server Setup with Process Manager
-	frameworkServer := &FrameworkServer{
-		db:              db,
-		dbExecutor:      database.NewDatabaseExecutor(db),
-		domainStreams:   make(map[string]FrameworkService_DomainCommunicationServer),
-		pendingRequests: make(map[string]*PendingRequest),
+	frameworkServer := &lang_adapters.FrameworkServer{
+		Db:              db,
+		DbExecutor:      database.NewDatabaseExecutor(db),
+		DomainStreams:   make(map[string]lang_adapters.FrameworkService_DomainCommunicationServer),
+		PendingRequests: make(map[string]*lang_adapters.PendingRequest),
 	}
-	frameworkServer.startCleanupRoutine()
+	frameworkServer.StartCleanupRoutine()
 
 	// Initialize Process Manager for JavaScript handlers
 	if err := frameworkServer.InitializeProcessManager(appConfig.Path, true); err != nil {
@@ -1489,8 +1499,8 @@ func StartBothServersWithProcessManager(appConfig *parser.AppConfig) {
 	grpcServer.GracefulStop()
 
 	// Stop process manager
-	if frameworkServer.processManager != nil {
-		if err := frameworkServer.processManager.StopAll(); err != nil {
+	if frameworkServer.ProcessManager != nil {
+		if err := frameworkServer.ProcessManager.StopAll(); err != nil {
 			log.Printf("Process manager shutdown error: %v", err)
 		}
 	}
@@ -1501,7 +1511,7 @@ func StartBothServersWithProcessManager(appConfig *parser.AppConfig) {
 // Legacy functions for backward compatibility
 
 // StartGRPCServer starts the gRPC server with the given FrameworkServer (legacy)
-func StartGRPCServer(frameworkServer *FrameworkServer) {
+func StartGRPCServer(frameworkServer *lang_adapters.FrameworkServer) {
 	listener, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		log.Fatalf("Failed to listen on port 50051: %v", err)
@@ -1512,7 +1522,7 @@ func StartGRPCServer(frameworkServer *FrameworkServer) {
 	reflection.Register(server)
 
 	// Register the framework service
-	RegisterFrameworkServiceServer(server, frameworkServer)
+	lang_adapters.RegisterFrameworkServiceServer(server, frameworkServer)
 
 	log.Println("gRPC server starting on :50051")
 
@@ -1523,7 +1533,7 @@ func StartGRPCServer(frameworkServer *FrameworkServer) {
 }
 
 // StartHTTPServerWithShutdown starts HTTP server and returns server instance for shutdown control (legacy)
-func StartHTTPServerWithShutdown(frameworkServer *FrameworkServer) *http.Server {
+func StartHTTPServerWithShutdown(frameworkServer *lang_adapters.FrameworkServer) *http.Server {
 	mux := http.NewServeMux()
 
 	// Health check handler
@@ -1552,7 +1562,7 @@ func StartHTTPServerWithShutdown(frameworkServer *FrameworkServer) *http.Server 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		domainMsg := &DomainMessage{
+		domainMsg := &lang_adapters.DomainMessage{
 			Domain:    domain,
 			Type:      msgType,
 			Payload:   payload,
