@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/spf13/cobra"
 )
@@ -53,6 +55,10 @@ func runGenerateProject(cmd *cobra.Command, args []string) {
 	// Create the basic directory structure
 	dirs := []string{
 		"domains",
+		"domains/auth/login",
+		"domains/auth/register",
+		"domains/auth/dashboard",
+		"domains/auth/migrations",
 		"shared/views/layouts",
 	}
 	for _, dir := range dirs {
@@ -85,8 +91,68 @@ func runGenerateProject(cmd *cobra.Command, args []string) {
 		log.Fatalf("Failed to write main.hbs: %v", err)
 	}
 
+	// Create auth domain templates (these can be overridden by users)
+	createAuthDomainFiles(newProjectPath)
+
 	fmt.Printf("✅ Created project: %s\n", newProjectPath)
 	fmt.Printf("✅ Configured database driver: postgresql\n")
 	fmt.Printf("✅ Created main.hbs layout\n")
+	fmt.Printf("✅ Created auth domain with login, register, dashboard templates\n")
+	fmt.Printf("\n💡 Auth templates can be customized in domains/auth/\n")
+	fmt.Printf("💡 Run migrations with: fulcrum migrate up\n")
 }
 
+// createAuthDomainFiles creates the auth domain files by copying from lib/views/auth
+func createAuthDomainFiles(projectPath string) {
+	// Get the path to the fulcrum executable to find lib/views/auth
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		log.Fatalf("Failed to get runtime caller info")
+	}
+
+	// Navigate from cmd/generate_project.go to lib/views/auth
+	fulcrumRoot := filepath.Dir(filepath.Dir(filename)) // Go up two levels from cmd/
+	libAuthPath := filepath.Join(fulcrumRoot, "lib", "views", "auth")
+
+	// Copy auth templates to project
+	authFiles := map[string]string{
+		"login/get.html.hbs":              "domains/auth/login/get.html.hbs",
+		"register/get.html.hbs":           "domains/auth/register/get.html.hbs",
+		"dashboard/get.html.hbs":          "domains/auth/dashboard/get.html.hbs",
+		"migrations/001_create_users_table.yml": "domains/auth/migrations/001_create_users_table.yml",
+	}
+
+	for srcFile, dstFile := range authFiles {
+		srcPath := filepath.Join(libAuthPath, srcFile)
+		dstPath := filepath.Join(projectPath, dstFile)
+
+		if err := copyFile(srcPath, dstPath); err != nil {
+			log.Printf("Warning: Failed to copy %s: %v", srcFile, err)
+			// Don't fail the entire process, just warn
+		}
+	}
+}
+
+// copyFile copies a file from src to dst
+func copyFile(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	// Create destination directory if it doesn't exist
+	dstDir := filepath.Dir(dst)
+	if err := os.MkdirAll(dstDir, 0755); err != nil {
+		return err
+	}
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	_, err = io.Copy(dstFile, srcFile)
+	return err
+}

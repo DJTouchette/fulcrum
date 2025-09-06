@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	lang_adapters "fulcrum/lib/lang/adapters"
@@ -32,13 +36,83 @@ var users = map[string]User{
 	"user":  {Username: "user", Password: "userpass"},
 }
 
+// findAuthTemplate finds an auth template, checking project domains first, then lib/views fallback
+func findAuthTemplate(templateName string) (string, error) {
+	// Get current working directory for project-specific templates
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Check project-specific auth template first
+	projectTemplate := filepath.Join(cwd, "domains", "auth", templateName)
+	if _, err := os.Stat(projectTemplate); err == nil {
+		log.Printf("🎯 Using project-specific auth template: %s", projectTemplate)
+		return projectTemplate, nil
+	}
+
+	// Fall back to lib/views/auth default template
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", fmt.Errorf("failed to get runtime caller info")
+	}
+
+	// Navigate from lib/auth/auth.go to lib/views/auth
+	libDir := filepath.Dir(filepath.Dir(filename)) // Go up two levels from lib/auth/
+	libTemplate := filepath.Join(libDir, "views", "auth", templateName)
+
+	if _, err := os.Stat(libTemplate); err == nil {
+		log.Printf("🏷️ Using default auth template: %s", libTemplate)
+		return libTemplate, nil
+	}
+
+	return "", fmt.Errorf("auth template %s not found in project or lib/views", templateName)
+}
+
+// loadAuthTemplate loads and renders an auth template with data
+func loadAuthTemplate(templateName string, data map[string]interface{}) (string, error) {
+	templatePath, err := findAuthTemplate(templateName)
+	if err != nil {
+		return "", err
+	}
+
+	tmpl, err := raymond.ParseFile(templatePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse template %s: %w", templateName, err)
+	}
+
+	html, err := tmpl.Exec(data)
+	if err != nil {
+		return "", fmt.Errorf("failed to execute template %s: %w", templateName, err)
+	}
+
+	return html, nil
+}
+
 func handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	if IsAuthenticated(r) {
-		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/dashboard", http.StatusSeeOther)
 		return
 	}
 
-	loginTemplate := `
+	// Get error/success from query params if any
+	errorMsg := r.URL.Query().Get("error")
+	successMsg := r.URL.Query().Get("success")
+
+	data := map[string]interface{}{}
+	if errorMsg != "" {
+		data["error"] = errorMsg
+	}
+	if successMsg != "" {
+		data["success"] = successMsg
+	}
+
+	// Try to load dynamic template, fallback to hardcoded if needed
+	html, err := loadAuthTemplate("login/get.html.hbs", data)
+	if err != nil {
+		log.Printf("⚠️ Failed to load dynamic auth template, using fallback: %v", err)
+		// Fallback to hardcoded template
+		loginTemplate := `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -57,10 +131,16 @@ func handleLoginPage(w http.ResponseWriter, r *http.Request) {
         </div>
         {{/if}}
 
-        <form method="POST" action="/login" class="space-y-4">
+        {{#if success}}
+        <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
+            {{success}}
+        </div>
+        {{/if}}
+
+        <form method="POST" action="/auth/login" class="space-y-4">
             <div>
-                <label for="username" class="block text-sm font-medium text-gray-700 mb-1">Username</label>
-                <input type="text" id="username" name="username" required 
+                <label for="username" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                <input type="email" id="username" name="username" required 
                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
             </div>
             
@@ -76,33 +156,27 @@ func handleLoginPage(w http.ResponseWriter, r *http.Request) {
             </button>
         </form>
         
-        <div class="mt-4 text-sm text-gray-600 text-center">
-            <p>Demo credentials:</p>
-            <p><strong>admin</strong> / password123</p>
-            <p><strong>user</strong> / userpass</p>
+        <div class="mt-6 text-center">
+            <p class="text-sm text-gray-600">
+                Don't have an account? 
+                <a href="/auth/register" class="text-blue-600 hover:text-blue-700 font-medium">Create one</a>
+            </p>
         </div>
     </div>
 </body>
 </html>`
 
-	// Get error from query params if any
-	errorMsg := r.URL.Query().Get("error")
+		tmpl, err := raymond.Parse(loginTemplate)
+		if err != nil {
+			http.Error(w, "Template error", http.StatusInternalServerError)
+			return
+		}
 
-	data := map[string]interface{}{}
-	if errorMsg != "" {
-		data["error"] = errorMsg
-	}
-
-	tmpl, err := raymond.Parse(loginTemplate)
-	if err != nil {
-		http.Error(w, "Template error", http.StatusInternalServerError)
-		return
-	}
-
-	html, err := tmpl.Exec(data)
-	if err != nil {
-		http.Error(w, "Template execution error", http.StatusInternalServerError)
-		return
+		html, err = tmpl.Exec(data)
+		if err != nil {
+			http.Error(w, "Template execution error", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/html")
@@ -124,7 +198,7 @@ func handleLoginSubmit(w http.ResponseWriter, r *http.Request, fs *lang_adapters
 	resultJSON, err := fs.DbExecutor.ExecuteSQL(ctx, "SELECT id, email, password_hash FROM users WHERE email = :username", params, nil)
 	if err != nil {
 		log.Printf("❌ Database execution failed: %v", err)
-		http.Redirect(w, r, "/login?error=Internal+Server+Error", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/login?error=Internal+Server+Error", http.StatusSeeOther)
 		return
 	}
 
@@ -137,19 +211,19 @@ func handleLoginSubmit(w http.ResponseWriter, r *http.Request, fs *lang_adapters
 
 	if err := json.Unmarshal(resultJSON, &dbResponse); err != nil {
 		log.Printf("❌ Failed to parse database response: %v", err)
-		http.Redirect(w, r, "/login?error=Internal+Server+Error", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/login?error=Internal+Server+Error", http.StatusSeeOther)
 		return
 	}
 
 	if !dbResponse.Success {
 		log.Printf("❌ Database query failed: %s", dbResponse.Error)
-		http.Redirect(w, r, "/login?error=Internal+Server+Error", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/login?error=Internal+Server+Error", http.StatusSeeOther)
 		return
 	}
 
 	if dbResponse.Count == 0 {
 		log.Printf("❌ User not found: %s", username)
-		http.Redirect(w, r, "/login?error=Invalid+credentials", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/login?error=Invalid+credentials", http.StatusSeeOther)
 		return
 	}
 
@@ -159,27 +233,27 @@ func handleLoginSubmit(w http.ResponseWriter, r *http.Request, fs *lang_adapters
 	email, ok := userData["email"].(string)
 	if !ok {
 		log.Printf("❌ Email field is missing or not a string")
-		http.Redirect(w, r, "/login?error=Internal+Server+Error", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/login?error=Internal+Server+Error", http.StatusSeeOther)
 		return
 	}
 
 	passwordHash, ok := userData["password_hash"].(string)
 	if !ok {
 		log.Printf("❌ Password hash field is missing or not a string")
-		http.Redirect(w, r, "/login?error=Internal+Server+Error", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/login?error=Internal+Server+Error", http.StatusSeeOther)
 		return
 	}
 
 	id, ok := userData["id"].(float64)
 	if !ok {
-		http.Redirect(w, r, "/login?error=Internal+Server+Error+ID", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/login?error=Internal+Server+Error+ID", http.StatusSeeOther)
 		return
 	}
 
 	// Validate password using bcrypt
 	if !ValidatePassword(password, passwordHash) {
 		log.Printf("❌ Invalid password for user: %s", username)
-		http.Redirect(w, r, "/login?error=Invalid+credentials", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/login?error=Invalid+credentials", http.StatusSeeOther)
 		return
 	}
 
@@ -201,7 +275,7 @@ func handleLoginSubmit(w http.ResponseWriter, r *http.Request, fs *lang_adapters
 	tokenString, err := token.SignedString(jwtSecret)
 	if err != nil {
 		log.Printf("❌ Failed to create JWT token: %v", err)
-		http.Redirect(w, r, "/login?error=Internal+server+error", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/login?error=Internal+server+error", http.StatusSeeOther)
 		return
 	}
 
@@ -219,13 +293,13 @@ func handleLoginSubmit(w http.ResponseWriter, r *http.Request, fs *lang_adapters
 
 	log.Printf("✅ Login successful, redirecting to dashboard")
 	// Redirect to dashboard
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	http.Redirect(w, r, "/auth/dashboard", http.StatusSeeOther)
 }
 
 // handleDashboard renders the protected dashboard page
 func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if !IsAuthenticated(r) {
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
 		return
 	}
 
@@ -249,7 +323,7 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
                 </div>
                 <div class="flex items-center space-x-4">
                     <span class="text-gray-700">Welcome, {{username}}!</span>
-                    <form method="POST" action="/logout" class="inline">
+                    <form method="POST" action="/auth/logout" class="inline">
                         <button type="submit" 
                                 class="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition duration-200">
                             Logout
@@ -321,7 +395,7 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, cookie)
 
-	http.Redirect(w, r, "/login", http.StatusSeeOther)
+	http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
 }
 
 // isAuthenticated checks if the request has a valid JWT token
@@ -367,26 +441,105 @@ func getUserFromToken(r *http.Request) string {
 	return ""
 }
 
+// tryRegisterRoute attempts to register a route, but gracefully handles conflicts
+func tryRegisterRoute(mux *http.ServeMux, pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Handle different panic types that could come from ServeMux
+			var errStr string
+			switch v := r.(type) {
+			case string:
+				errStr = v
+			case error:
+				errStr = v.Error()
+			default:
+				errStr = fmt.Sprintf("%v", r)
+			}
+			
+			// Check if this is a route conflict panic
+			if strings.Contains(errStr, "conflicts with pattern") {
+				log.Printf("⚠️ Route %s already registered, skipping manual registration", pattern)
+				return
+			}
+			panic(r) // Re-panic if it's not a route conflict
+		}
+	}()
+	mux.HandleFunc(pattern, handler)
+	log.Printf("✅ Manually registered auth route: %s", pattern)
+}
+
 func AddLoginRoute(mux *http.ServeMux, fs *lang_adapters.FrameworkServer) {
-	mux.HandleFunc("GET /login", handleLoginPage)
-	mux.HandleFunc("POST /login", func(w http.ResponseWriter, r *http.Request) {
+	// New /auth prefixed routes
+	// Note: We defer to manual registration since auth routes need special handling
+	tryRegisterRoute(mux, "GET /auth/login", handleLoginPage)
+	mux.HandleFunc("POST /auth/login", func(w http.ResponseWriter, r *http.Request) {
 		handleLoginSubmit(w, r, fs)
 	})
-	mux.HandleFunc("GET /register", handleRegisterPage)
+	mux.HandleFunc("GET /auth/register", handleRegisterPage)
+	mux.HandleFunc("POST /auth/register", func(w http.ResponseWriter, r *http.Request) {
+		handleRegisterSubmit(w, r, fs)
+	})
+	mux.HandleFunc("GET /auth/dashboard", handleDashboard)
+	mux.HandleFunc("POST /auth/logout", handleLogout)
+
+	// Backward compatibility redirects for old URLs
+	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {
+		// Preserve query parameters (like error messages)
+		query := r.URL.RawQuery
+		redirectURL := "/auth/login"
+		if query != "" {
+			redirectURL += "?" + query
+		}
+		http.Redirect(w, r, redirectURL, http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("POST /login", func(w http.ResponseWriter, r *http.Request) {
+		// For POST requests, we need to redirect but preserve the form data
+		// Since we can't preserve POST data in a redirect, we'll handle the login here
+		handleLoginSubmit(w, r, fs)
+	})
+	mux.HandleFunc("GET /register", func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.RawQuery
+		redirectURL := "/auth/register"
+		if query != "" {
+			redirectURL += "?" + query
+		}
+		http.Redirect(w, r, redirectURL, http.StatusMovedPermanently)
+	})
 	mux.HandleFunc("POST /register", func(w http.ResponseWriter, r *http.Request) {
 		handleRegisterSubmit(w, r, fs)
 	})
-	mux.HandleFunc("GET /dashboard", handleDashboard)
-	mux.HandleFunc("POST /logout", handleLogout)
+	mux.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/auth/dashboard", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("POST /logout", func(w http.ResponseWriter, r *http.Request) {
+		handleLogout(w, r)
+	})
 }
 
 func handleRegisterPage(w http.ResponseWriter, r *http.Request) {
 	if IsAuthenticated(r) {
-		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/dashboard", http.StatusSeeOther)
 		return
 	}
 
-	registerTemplate := `
+	// Get error/success from query params if any
+	errorMsg := r.URL.Query().Get("error")
+	successMsg := r.URL.Query().Get("success")
+
+	data := map[string]interface{}{}
+	if errorMsg != "" {
+		data["error"] = errorMsg
+	}
+	if successMsg != "" {
+		data["success"] = successMsg
+	}
+
+	// Try to load dynamic template, fallback to hardcoded if needed
+	html, err := loadAuthTemplate("register/get.html.hbs", data)
+	if err != nil {
+		log.Printf("⚠️ Failed to load dynamic register template, using fallback: %v", err)
+		// Fallback to hardcoded template
+		registerTemplate := `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -411,7 +564,7 @@ func handleRegisterPage(w http.ResponseWriter, r *http.Request) {
         </div>
         {{/if}}
 
-        <form method="POST" action="/register" class="space-y-4">
+        <form method="POST" action="/auth/register" class="space-y-4">
             <div>
                 <label for="email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
                 <input type="email" id="email" name="email" required 
@@ -432,7 +585,7 @@ func handleRegisterPage(w http.ResponseWriter, r *http.Request) {
             </div>
             
             <button type="submit" 
-                    class="w-full bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition duration-200">
+			class="w-full bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition duration-200">
                 Create Account
             </button>
         </form>
@@ -440,35 +593,24 @@ func handleRegisterPage(w http.ResponseWriter, r *http.Request) {
         <div class="mt-6 text-center">
             <p class="text-sm text-gray-600">
                 Already have an account? 
-                <a href="/login" class="text-blue-600 hover:text-blue-700 font-medium">Sign in</a>
+                <a href="/auth/login" class="text-blue-600 hover:text-blue-700 font-medium">Sign in</a>
             </p>
         </div>
     </div>
 </body>
 </html>`
 
-	// Get error/success from query params if any
-	errorMsg := r.URL.Query().Get("error")
-	successMsg := r.URL.Query().Get("success")
+		tmpl, err := raymond.Parse(registerTemplate)
+		if err != nil {
+			http.Error(w, "Template error", http.StatusInternalServerError)
+			return
+		}
 
-	data := map[string]interface{}{}
-	if errorMsg != "" {
-		data["error"] = errorMsg
-	}
-	if successMsg != "" {
-		data["success"] = successMsg
-	}
-
-	tmpl, err := raymond.Parse(registerTemplate)
-	if err != nil {
-		http.Error(w, "Template error", http.StatusInternalServerError)
-		return
-	}
-
-	html, err := tmpl.Exec(data)
-	if err != nil {
-		http.Error(w, "Template execution error", http.StatusInternalServerError)
-		return
+		html, err = tmpl.Exec(data)
+		if err != nil {
+			http.Error(w, "Template execution error", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/html")
@@ -483,17 +625,17 @@ func handleRegisterSubmit(w http.ResponseWriter, r *http.Request, fs *lang_adapt
 
 	// Validate form data
 	if email == "" || password == "" || confirmPassword == "" {
-		http.Redirect(w, r, "/register?error=All+fields+are+required", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/register?error=All+fields+are+required", http.StatusSeeOther)
 		return
 	}
 
 	if len(password) < 6 {
-		http.Redirect(w, r, "/register?error=Password+must+be+at+least+6+characters", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/register?error=Password+must+be+at+least+6+characters", http.StatusSeeOther)
 		return
 	}
 
 	if password != confirmPassword {
-		http.Redirect(w, r, "/register?error=Passwords+do+not+match", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/register?error=Passwords+do+not+match", http.StatusSeeOther)
 		return
 	}
 
@@ -508,7 +650,7 @@ func handleRegisterSubmit(w http.ResponseWriter, r *http.Request, fs *lang_adapt
 	checkResultJSON, err := fs.DbExecutor.ExecuteSQL(ctx, "SELECT COUNT(*) as count FROM users WHERE email = :email", checkParams, nil)
 	if err != nil {
 		log.Printf("❌ Database check failed: %v", err)
-		http.Redirect(w, r, "/register?error=Internal+Server+Error", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/register?error=Internal+Server+Error", http.StatusSeeOther)
 		return
 	}
 
@@ -521,20 +663,20 @@ func handleRegisterSubmit(w http.ResponseWriter, r *http.Request, fs *lang_adapt
 
 	if err := json.Unmarshal(checkResultJSON, &checkResponse); err != nil {
 		log.Printf("❌ Failed to parse check response: %v", err)
-		http.Redirect(w, r, "/register?error=Internal+Server+Error", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/register?error=Internal+Server+Error", http.StatusSeeOther)
 		return
 	}
 
 	if !checkResponse.Success {
 		log.Printf("❌ Database check query failed: %s", checkResponse.Error)
-		http.Redirect(w, r, "/register?error=Internal+Server+Error", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/register?error=Internal+Server+Error", http.StatusSeeOther)
 		return
 	}
 
 	if len(checkResponse.Data) > 0 {
 		if count, ok := checkResponse.Data[0]["count"].(float64); ok && count > 0 {
 			log.Printf("❌ User already exists: %s", email)
-			http.Redirect(w, r, "/register?error=Email+already+registered", http.StatusSeeOther)
+			http.Redirect(w, r, "/auth/register?error=Email+already+registered", http.StatusSeeOther)
 			return
 		}
 	}
@@ -543,7 +685,7 @@ func handleRegisterSubmit(w http.ResponseWriter, r *http.Request, fs *lang_adapt
 	hashedPassword, err := HashPassword(password)
 	if err != nil {
 		log.Printf("❌ Failed to hash password: %v", err)
-		http.Redirect(w, r, "/register?error=Internal+Server+Error", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/register?error=Internal+Server+Error", http.StatusSeeOther)
 		return
 	}
 
@@ -556,7 +698,7 @@ func handleRegisterSubmit(w http.ResponseWriter, r *http.Request, fs *lang_adapt
 	insertResultJSON, err := fs.DbExecutor.ExecuteSQL(ctx, "INSERT INTO users (email, password_hash) VALUES (:email, :password_hash)", insertParams, nil)
 	if err != nil {
 		log.Printf("❌ Failed to insert user: %v", err)
-		http.Redirect(w, r, "/register?error=Failed+to+create+account", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/register?error=Failed+to+create+account", http.StatusSeeOther)
 		return
 	}
 
@@ -567,16 +709,16 @@ func handleRegisterSubmit(w http.ResponseWriter, r *http.Request, fs *lang_adapt
 
 	if err := json.Unmarshal(insertResultJSON, &insertResponse); err != nil {
 		log.Printf("❌ Failed to parse insert response: %v", err)
-		http.Redirect(w, r, "/register?error=Internal+Server+Error", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/register?error=Internal+Server+Error", http.StatusSeeOther)
 		return
 	}
 
 	if !insertResponse.Success {
 		log.Printf("❌ Failed to insert user: %s", insertResponse.Error)
-		http.Redirect(w, r, "/register?error=Failed+to+create+account", http.StatusSeeOther)
+		http.Redirect(w, r, "/auth/register?error=Failed+to+create+account", http.StatusSeeOther)
 		return
 	}
 
 	log.Printf("✅ User registered successfully: %s", email)
-	http.Redirect(w, r, "/login?success=Account+created+successfully!+Please+log+in.", http.StatusSeeOther)
+	http.Redirect(w, r, "/auth/login?success=Account+created+successfully!+Please+log+in.", http.StatusSeeOther)
 }

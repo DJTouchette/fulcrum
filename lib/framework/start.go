@@ -156,6 +156,9 @@ func wrapInLayout(content string, data any, renderer *views.TemplateRenderer) (s
 func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *lang_adapters.FrameworkServer) *http.ServeMux {
 	mux := http.NewServeMux()
 
+	// Track registered routes to avoid conflicts
+	registeredRoutes := make(map[string]bool)
+
 	// Health check handler
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("🏥 Health check: %s %s", r.Method, r.URL.Path)
@@ -228,6 +231,13 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *lang_ad
 
 		// Convert [param] syntax to Go's {param} syntax for ServeMux
 		goPattern := convertToGoServeMuxPattern(group.Pattern)
+		routeKey := fmt.Sprintf("%s %s", group.Method, goPattern)
+
+		// Check if this route is already registered
+		if registeredRoutes[routeKey] {
+			log.Printf("⏭️ Skipping duplicate route: %s (already registered)", routeKey)
+			continue
+		}
 
 		log.Printf("📝 Registering: %s %s -> %s (domain: %s, html: %s, sql: %s)",
 			group.Method, group.Pattern, goPattern, group.Domain,
@@ -239,14 +249,18 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *lang_ad
 				return "none"
 			}())
 
+		// Mark this route as registered
+		registeredRoutes[routeKey] = true
+
 		// Capture variables in closure
 		capturedGroup := group
 
 		// Create handler function for this pattern with HTMX support
 		handlerFunc := func(w http.ResponseWriter, r *http.Request) {
-			if !auth.IsAuthenticated(r) {
+			// Skip authentication check for auth domain routes - they handle auth themselves
+			if capturedGroup.Domain != "auth" && !auth.IsAuthenticated(r) {
 				log.Printf("🔍 Request: %s %s has been redirected to login", r.Method, r.URL.Path)
-				http.Redirect(w, r, "/login", http.StatusSeeOther)
+				http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
 				return
 			}
 
