@@ -14,7 +14,7 @@ up:
           length: 255
           nullable: false
           unique: true
-        - name: name
+        - name: password_hash
           type: text
           nullable: false
         - name: created_at
@@ -25,7 +25,14 @@ up:
           type: timestamp
           nullable: false
           default: "NOW()"
+  - add_index:
+      table: users
+      columns: [email]
+      unique: true
+      name: idx_users_email_unique
 
 down:
   - drop_table:
       name: users
+  - drop_index:
+      name: idx_users_email_unique
