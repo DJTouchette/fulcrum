@@ -306,30 +306,33 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *lang_ad
 
 	// Catch-all for debugging unmatched routes
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if appConfig.Root != "" {
-			fmt.Println("")
-			handleHTMLRouteWithProcessManager(w, r, rootGroup, appConfig, frameworkServer)
-			return
+		if r.URL.Path == "/" {
+			if appConfig.Root != "" {
+				handleHTMLRouteWithProcessManager(w, r, rootGroup, appConfig, frameworkServer)
+				return
+			}
 		}
 
-		log.Printf("🚫 Unmatched request: %s %s", r.Method, r.URL.Path)
+		if appConfig.Mode == "develop" {
+			log.Printf("🚫 Unmatched request: %s %s", r.Method, r.URL.Path)
 
-		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintf(w, "No route found for %s %s\n\n", r.Method, r.URL.Path)
-		fmt.Fprintf(w, "Available routes:\n")
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprintf(w, "No route found for %s %s\n\n", r.Method, r.URL.Path)
+			fmt.Fprintf(w, "Available routes:\n")
 
-		for _, routeInfo := range sortedRoutes {
-			group := routeInfo.group
-			goPattern := convertToGoServeMuxPattern(group.Pattern)
-			fmt.Fprintf(w, "  %s %s -> %s (html: %s, sql: %s)\n",
-				group.Method, goPattern, group.Pattern,
-				group.HTMLRoute.View,
-				func() string {
-					if group.SQLRoute != nil {
-						return group.SQLRoute.View
-					}
-					return "none"
-				}())
+			for _, routeInfo := range sortedRoutes {
+				group := routeInfo.group
+				goPattern := convertToGoServeMuxPattern(group.Pattern)
+				fmt.Fprintf(w, "  %s %s -> %s (html: %s, sql: %s)\n",
+					group.Method, goPattern, group.Pattern,
+					group.HTMLRoute.View,
+					func() string {
+						if group.SQLRoute != nil {
+							return group.SQLRoute.View
+						}
+						return "none"
+					}())
+			}
 		}
 	})
 

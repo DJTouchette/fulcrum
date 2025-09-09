@@ -20,6 +20,7 @@ type AppConfig struct {
 	DB      DBConfig       `yaml:"db"`
 	Path    string         `yaml:"path"`
 	Root    string         `yaml:"root"`
+	Mode    string
 	Views   *views.TemplateRenderer
 }
 

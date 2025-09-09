@@ -26,6 +26,8 @@ to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("dev called")
 		appConfig, err := parser.GetAppConfig("/home/djtouchette/Documents/fulcrum/example")
+		appConfig.Mode = "develop"
+
 		if err != nil {
 			fmt.Println("Error getting app config:", err)
 		}
