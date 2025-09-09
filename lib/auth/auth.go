@@ -475,11 +475,11 @@ func AddLoginRoute(mux *http.ServeMux, fs *lang_adapters.FrameworkServer) {
 	mux.HandleFunc("POST /auth/login", func(w http.ResponseWriter, r *http.Request) {
 		handleLoginSubmit(w, r, fs)
 	})
-	mux.HandleFunc("GET /auth/register", handleRegisterPage)
+	tryRegisterRoute(mux, "GET /auth/register", handleRegisterPage)
 	mux.HandleFunc("POST /auth/register", func(w http.ResponseWriter, r *http.Request) {
 		handleRegisterSubmit(w, r, fs)
 	})
-	mux.HandleFunc("GET /auth/dashboard", handleDashboard)
+	tryRegisterRoute(mux, "GET /auth/dashboard", handleDashboard)
 	mux.HandleFunc("POST /auth/logout", handleLogout)
 
 	// Backward compatibility redirects for old URLs

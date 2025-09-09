@@ -1,0 +1,11 @@
+db:
+  driver: postgresql
+  host: localhost
+  port: 5432
+  database: fulcrum_dev
+  username: fulcrum
+  password: fulcrum_pass
+  ssl_mode: disable
+  max_open_conns: 25
+  max_idle_conns: 10
+  conn_max_lifetime_minutes: 5

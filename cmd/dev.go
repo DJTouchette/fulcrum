@@ -25,7 +25,7 @@ This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("dev called")
-		appConfig, err := parser.GetAppConfig("/home/djtouchette/Documents/fulcrum/fulcrum-example")
+		appConfig, err := parser.GetAppConfig("/home/djtouchette/Documents/fulcrum/my-new-app")
 		if err != nil {
 			fmt.Println("Error getting app config:", err)
 		}
