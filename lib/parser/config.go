@@ -19,6 +19,7 @@ type AppConfig struct {
 	Domains []DomainConfig `yaml:"domains"`
 	DB      DBConfig       `yaml:"db"`
 	Path    string         `yaml:"path"`
+	Root    string         `yaml:"root"`
 	Views   *views.TemplateRenderer
 }
 

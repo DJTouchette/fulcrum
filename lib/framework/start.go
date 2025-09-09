@@ -225,9 +225,15 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *lang_ad
 		return sortedRoutes[i].specificity > sortedRoutes[j].specificity
 	})
 
+	rootGroup := sortedRoutes[0].group
+
 	// Register routes in order of specificity
 	for _, routeInfo := range sortedRoutes {
 		group := routeInfo.group
+		if group.Pattern == appConfig.Root {
+			rootGroup = group
+			rootGroup.Pattern = "/"
+		}
 
 		// Convert [param] syntax to Go's {param} syntax for ServeMux
 		goPattern := convertToGoServeMuxPattern(group.Pattern)
@@ -300,6 +306,12 @@ func CreateRouteDispatcher(appConfig *parser.AppConfig, frameworkServer *lang_ad
 
 	// Catch-all for debugging unmatched routes
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if appConfig.Root != "" {
+			fmt.Println("")
+			handleHTMLRouteWithProcessManager(w, r, rootGroup, appConfig, frameworkServer)
+			return
+		}
+
 		log.Printf("🚫 Unmatched request: %s %s", r.Method, r.URL.Path)
 
 		w.Header().Set("Content-Type", "text/plain")

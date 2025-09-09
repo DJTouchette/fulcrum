@@ -25,11 +25,6 @@ This will create a new directory with the specified name and populate it with th
 	Run:  runGenerateProject,
 }
 
-
-
-
-
-
 func runGenerateProject(cmd *cobra.Command, args []string) {
 	projectName := args[0]
 
@@ -69,8 +64,19 @@ func runGenerateProject(cmd *cobra.Command, args []string) {
 
 	// Create the fulcrum.yml file
 	fulcrumYmlPath := filepath.Join(newProjectPath, "fulcrum.yml")
-	fulcrumYmlContent := `database:
+	fulcrumYmlContent := `db:
   driver: postgresql
+  host: localhost
+  port: 5432
+  database: fulcrum_dev
+  username: fulcrum
+  password: fulcrum_pass
+  ssl_mode: disable
+  max_open_conns: 25
+  max_idle_conns: 10
+  conn_max_lifetime_minutes: 5
+
+root: /auth/dashboard
 `
 	if err := os.WriteFile(fulcrumYmlPath, []byte(fulcrumYmlContent), 0644); err != nil {
 		log.Fatalf("Failed to write fulcrum.yml: %v", err)
@@ -79,12 +85,138 @@ func runGenerateProject(cmd *cobra.Command, args []string) {
 	// Create the main.hbs layout
 	mainHbsPath := filepath.Join(newProjectPath, "shared", "views", "layouts", "main.hbs")
 	mainHbsContent := `<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-	<title>{{title}}</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{#if pageTitle}}{{pageTitle}} - {{/if}}Fulcrum</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    {{#if additionalCSS}}{{{additionalCSS}}}{{/if}}
 </head>
-<body>
-	{{{body}}}
+<body class="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-indigo-50">
+    <!-- Header -->
+    <header class="bg-white/90 backdrop-blur-sm border-b border-purple-200/50 shadow-lg sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-6 py-4">
+            <div class="flex items-center justify-between">
+                <a href="/" class="text-3xl font-bold bg-gradient-to-r from-purple-600 via-pink-600 to-indigo-600 bg-clip-text text-transparent hover:scale-105 transition-transform duration-200">
+                    Fulcrum
+                </a>
+                
+                {{#if navigation}}
+                <nav class="hidden md:flex space-x-8">
+                    {{#each navigation}}
+                    <a href="{{url}}" class="text-gray-700 hover:text-purple-600 font-medium transition-colors duration-200 relative group">
+                        {{label}}
+                        <span class="absolute -bottom-1 left-0 w-0 h-0.5 bg-gradient-to-r from-purple-500 to-pink-500 group-hover:w-full transition-all duration-300"></span>
+                    </a>
+                    {{/each}}
+                </nav>
+                
+                <!-- Mobile menu button -->
+                <button class="md:hidden p-2 rounded-lg hover:bg-purple-100 transition-colors duration-200" onclick="toggleMobileMenu()">
+                    <svg class="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                    </svg>
+                </button>
+                {{/if}}
+            </div>
+            
+            {{#if navigation}}
+            <!-- Mobile menu -->
+            <div id="mobileMenu" class="hidden md:hidden mt-4 pb-4 border-t border-purple-200">
+                <nav class="flex flex-col space-y-3 pt-4">
+                    {{#each navigation}}
+                    <a href="{{url}}" class="text-gray-700 hover:text-purple-600 font-medium transition-colors duration-200 py-2">
+                        {{label}}
+                    </a>
+                    {{/each}}
+                </nav>
+            </div>
+            {{/if}}
+        </div>
+    </header>
+    
+    <!-- Main Content Container -->
+    <div class="flex-1">
+        {{#if pageTitle}}
+        <div class="max-w-7xl mx-auto px-6 py-8">
+            <div class="text-center mb-8">
+                <h1 class="text-4xl md:text-5xl font-bold bg-gradient-to-r from-purple-600 via-pink-600 to-indigo-600 bg-clip-text text-transparent mb-4">
+                    {{pageTitle}}
+                </h1>
+                <div class="w-24 h-1 bg-gradient-to-r from-purple-500 via-pink-500 to-indigo-500 rounded-full mx-auto"></div>
+            </div>
+        </div>
+        {{/if}}
+        
+        <!-- Flash Messages -->
+        {{#if flash}}
+        <div class="max-w-7xl mx-auto px-6 mb-6">
+            {{#if flash.success}}
+            <div class="bg-emerald-50/90 backdrop-blur-sm border border-emerald-200 text-emerald-800 px-6 py-4 rounded-xl shadow-lg mb-4">
+                <div class="flex items-center">
+                    <svg class="w-5 h-5 mr-3 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    {{flash.success}}
+                </div>
+            </div>
+            {{/if}}
+            {{#if flash.error}}
+            <div class="bg-red-50/90 backdrop-blur-sm border border-red-200 text-red-800 px-6 py-4 rounded-xl shadow-lg mb-4">
+                <div class="flex items-center">
+                    <svg class="w-5 h-5 mr-3 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    {{flash.error}}
+                </div>
+            </div>
+            {{/if}}
+        </div>
+        {{/if}}
+        
+        <!-- Main Content -->
+        <main class="flex-1">
+            {{{body}}}
+        </main>
+    </div>
+    
+    <!-- Footer -->
+    <footer class="bg-white/80 backdrop-blur-sm border-t border-purple-200/50 mt-16">
+        <div class="max-w-7xl mx-auto px-6 py-8">
+            <div class="text-center">
+                <p class="text-gray-600">
+                    &copy; {{currentYear}} {{siteName}} &bull; 
+                    <span class="bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent font-medium">
+                        All rights reserved
+                    </span>
+                </p>
+                <div class="mt-4">
+                    <div class="w-16 h-0.5 bg-gradient-to-r from-purple-400 via-pink-400 to-indigo-400 rounded-full mx-auto"></div>
+                </div>
+            </div>
+        </div>
+    </footer>
+    
+    {{#if additionalJS}}{{{additionalJS}}}{{/if}}
+    
+    <script>
+        function toggleMobileMenu() {
+            const menu = document.getElementById('mobileMenu');
+            menu.classList.toggle('hidden');
+        }
+        
+        // Auto-dismiss flash messages after 5 seconds
+        setTimeout(() => {
+            const flashMessages = document.querySelectorAll('[class*="bg-emerald-50"], [class*="bg-red-50"]');
+            flashMessages.forEach(msg => {
+                msg.style.transition = 'opacity 0.5s ease-out';
+                msg.style.opacity = '0';
+                setTimeout(() => msg.remove(), 500);
+            });
+        }, 5000);
+    </script>
 </body>
 </html>`
 	if err := os.WriteFile(mainHbsPath, []byte(mainHbsContent), 0644); err != nil {
@@ -116,9 +248,9 @@ func createAuthDomainFiles(projectPath string) {
 
 	// Copy auth templates to project
 	authFiles := map[string]string{
-		"login/get.html.hbs":              "domains/auth/login/get.html.hbs",
-		"register/get.html.hbs":           "domains/auth/register/get.html.hbs",
-		"dashboard/get.html.hbs":          "domains/auth/dashboard/get.html.hbs",
+		"login/get.html.hbs":                    "domains/auth/login/get.html.hbs",
+		"register/get.html.hbs":                 "domains/auth/register/get.html.hbs",
+		"dashboard/get.html.hbs":                "domains/auth/dashboard/get.html.hbs",
 		"migrations/001_create_users_table.yml": "domains/auth/migrations/001_create_users_table.yml",
 	}
 
