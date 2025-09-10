@@ -54,6 +54,7 @@ func runGenerateProject(cmd *cobra.Command, args []string) {
 		"domains/auth/register",
 		"domains/auth/dashboard",
 		"domains/auth/migrations",
+		"domains/auth/tenant/new",
 		"shared/views/layouts",
 	}
 	for _, dir := range dirs {
@@ -248,10 +249,15 @@ func createAuthDomainFiles(projectPath string) {
 
 	// Copy auth templates to project
 	authFiles := map[string]string{
-		"login/get.html.hbs":                    "domains/auth/login/get.html.hbs",
-		"register/get.html.hbs":                 "domains/auth/register/get.html.hbs",
-		"dashboard/get.html.hbs":                "domains/auth/dashboard/get.html.hbs",
-		"migrations/001_create_users_table.yml": "domains/auth/migrations/001_create_users_table.yml",
+		"login/get.html.hbs":                           "domains/auth/login/get.html.hbs",
+		"register/get.html.hbs":                        "domains/auth/register/get.html.hbs",
+		"dashboard/get.html.hbs":                       "domains/auth/dashboard/get.html.hbs",
+		"tenant/new/get.html.hbs":                      "domains/auth/tenant/new/get.html.hbs",
+		"tenant/new/post.html.hbs":                     "domains/auth/tenant/new/post.html.hbs",
+		"tenant/new/post.sql.hbs":                      "domains/auth/tenant/new/post.sql.hbs",
+		"migrations/001_create_users_table.yml":        "domains/auth/migrations/001_create_users_table.yml",
+		"migrations/002_create_tenants_table.yml":      "domains/auth/migrations/002_create_tenants_table.yml",
+		"migrations/003_create_user_tenants_table.yml": "domains/auth/migrations/003_create_user_tenants_table.yml",
 	}
 
 	for srcFile, dstFile := range authFiles {

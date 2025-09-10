@@ -1,0 +1,10 @@
+BEGIN;
+
+WITH new_tenant AS (
+    INSERT INTO tenants (name) VALUES ({{tenant_name}}) RETURNING id
+)
+INSERT INTO user_tenants (user_id, tenant_id) SELECT {{.user_id}}, new_tenant.id FROM new_tenant;
+
+UPDATE users SET current_tenant_id = (SELECT id FROM tenants WHERE name = {{tenant_name}}) WHERE id = {{.user_id}};
+
+COMMIT;

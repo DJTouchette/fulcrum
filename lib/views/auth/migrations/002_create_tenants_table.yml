@@ -1,0 +1,26 @@
+version: 2
+name: create_tenants_table
+description: "Create tenants table"
+
+up:
+  - create_table:
+      name: tenants
+      columns:
+        - name: id
+          type: serial
+          primary_key: true
+        - name: name
+          type: varchar(255)
+          nullable: false
+        - name: created_at
+          type: timestamp
+          nullable: false
+          default: "NOW()"
+        - name: updated_at
+          type: timestamp
+          nullable: false
+          default: "NOW()"
+
+down:
+  - drop_table:
+      name: tenants

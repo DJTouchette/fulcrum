@@ -1,0 +1,20 @@
+version: 3
+name: create_user_tenants_table
+description: "Create user_tenants table"
+
+up:
+  - create_table:
+      name: user_tenants
+      columns:
+        - name: id
+          type: serial
+        - name: user_id
+          type: bigint 
+          nullable: false
+        - name: tenant_id
+          type: bigint 
+          nullable: false
+
+down:
+  - drop_table:
+      name: user_tenants

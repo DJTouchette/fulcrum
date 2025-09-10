@@ -18,6 +18,9 @@ up:
           type: varchar
           length: 255
           nullable: false
+        - name: current_tenant_id
+          type: bigint 
+          nullable: true
         - name: created_at
           type: timestamp
           nullable: false
