@@ -51,46 +51,55 @@ class HandlerService {
       console.log(`Parameters:`, params);
       
       // Process through handler registry
-      const result = this.registry.processRequest({
+      this.registry.processRequest({
         domain: request.domain,
         action: request.action,
         params: params,
         sql: sqlData,
         request: requestData
-      });
+      }).then(result => {
+          if (result.success) {
+            const response = {
+              success: true,
+              processed_data: this.objectToStruct(result.data),
+              error_message: '',
+              metadata: {}
+            };
+            
+            // Handle redirects
+            if (result.data && result.data._redirect) {
+              response.redirect = {
+                url: result.data._redirect.url,
+                status_code: result.data._redirect.status || 303
+              };
+              
+              // Remove redirect from processed data to avoid template confusion
+              const cleanData = { ...result.data };
+              delete cleanData._redirect;
+              response.processed_data = this.objectToStruct(cleanData);
+            }
+            
+            console.log(`Handler completed successfully`);
+            callback(null, response);
+          } else {
+            console.error(`Handler error: ${result.error}`);
+            callback(null, {
+              success: false,
+              processed_data: this.objectToStruct({}),
+              error_message: result.error,
+              metadata: {}
+            });
+          }
+      }).catch(error => {
+          console.error(`Processing error:`, error);
       
-      if (result.success) {
-        const response = {
-          success: true,
-          processed_data: this.objectToStruct(result.data),
-          error_message: '',
-          metadata: {}
-        };
-        
-        // Handle redirects
-        if (result.data && result.data._redirect) {
-          response.redirect = {
-            url: result.data._redirect.url,
-            status_code: result.data._redirect.status || 303
-          };
-          
-          // Remove redirect from processed data to avoid template confusion
-          const cleanData = { ...result.data };
-          delete cleanData._redirect;
-          response.processed_data = this.objectToStruct(cleanData);
-        }
-        
-        console.log(`Handler completed successfully`);
-        callback(null, response);
-      } else {
-        console.error(`Handler error: ${result.error}`);
-        callback(null, {
-          success: false,
-          processed_data: this.objectToStruct({}),
-          error_message: result.error,
-          metadata: {}
-        });
-      }
+          callback(null, {
+            success: false,
+            processed_data: this.objectToStruct({}),
+            error_message: error.message,
+            metadata: {}
+          });
+      });
       
     } catch (error) {
       console.error(`Processing error:`, error);

@@ -87,7 +87,7 @@ class HandlerRegistry {
   }
 
   // In your HandlerRegistry.js route method, add debug logging:
-route(domain, action, params = {}, context) {
+async route(domain, action, params = {}, context) {
     console.log(`🔍 Looking for handler: ${domain}.${action}`);
     console.log(`🔍 Available handlers:`, Array.from(this.handlers.keys()));
     
@@ -97,7 +97,7 @@ route(domain, action, params = {}, context) {
     
     if (this.handlers.has(exactId)) {
         console.log(`✅ Found exact match: ${exactId}`);
-        return this.executeHandler(exactId, context);
+        return await this.executeHandler(exactId, context);
     }
     
     console.log(`❌ No exact match, trying parameterized...`);
@@ -107,7 +107,7 @@ route(domain, action, params = {}, context) {
     console.log(`🔍 Parameterized result: ${parameterizedId}`);
     
     if (parameterizedId) {
-        return this.executeHandler(parameterizedId, context);
+        return await this.executeHandler(parameterizedId, context);
     }
     
     console.log(`❌ No handler found for: ${domain}.${action}`);
@@ -154,7 +154,7 @@ route(domain, action, params = {}, context) {
     return true;
   }
   
-  executeHandler(handlerId, context) {
+  async executeHandler(handlerId, context) {
     const handlerInfo = this.handlers.get(handlerId);
     
     if (!handlerInfo) {
@@ -173,18 +173,18 @@ route(domain, action, params = {}, context) {
     const handler = this.handlers.get(handlerId).handler;
     
     if (typeof handler === 'function') {
-      return handler(context);
+      return await handler(context);
     } else if (typeof handler.handle === 'function') {
-      return handler.handle(context);
+      return await handler.handle(context);
     } else if (typeof handler.process === 'function') {
-      return handler.process(context);
+      return await handler.process(context);
     } else {
       throw new Error(`Handler ${handlerId} must export a function or object with handle/process method`);
     }
   }
   
   // Public method to process requests (called from Go via gRPC)
-  processRequest(requestData) {
+  async processRequest(requestData) {
     try {
       const { domain, action, params = {}, sql = null, request = {} } = requestData;
       
@@ -204,10 +204,7 @@ route(domain, action, params = {}, context) {
       };
       
       // Route to appropriate handler
-      const result = this.route(domain, action, params, context);
-
-      // Execute handler with context
-      const handlerResult = typeof result === 'function' ? result(context) : result;
+      const handlerResult = await this.route(domain, action, params, context);
       
       return {
         success: true,

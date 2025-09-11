@@ -379,6 +379,26 @@ func extractActionFromRoute(pattern, method string) string {
 	}
 }
 
+// convertHtmxStructToMap converts the _htmx struct to a map for protobuf compatibility
+func convertHtmxStructToMap(data any) any {
+	if mapData, ok := data.(map[string]any); ok {
+		if htmxStruct, ok := mapData["_htmx"].(HTMXRequest); ok {
+			var htmxMap map[string]any
+			htmxJSON, _ := json.Marshal(htmxStruct)
+			json.Unmarshal(htmxJSON, &htmxMap)
+
+			// Create a new map to avoid modifying the original
+			newData := make(map[string]any)
+			for k, v := range mapData {
+				newData[k] = v
+			}
+			newData["_htmx"] = htmxMap
+			return newData
+		}
+	}
+	return data // Return original data if not a map or no _htmx struct
+}
+
 func handleHTMLRouteWithProcessManager(w http.ResponseWriter, r *http.Request, group RouteGroup, appConfig *parser.AppConfig, frameworkServer *lang_adapters.FrameworkServer) {
 	log.Printf("Processing route: %s %s", group.Method, group.Pattern)
 
@@ -416,7 +436,11 @@ func handleHTMLRouteWithProcessManager(w http.ResponseWriter, r *http.Request, g
 		action := extractActionFromRoute(group.Pattern, group.Method)
 		log.Printf("Executing handler: %s.%s", domain, action)
 
-		processedData, err := frameworkServer.ProcessManager.ExecuteHandler(domain, action, templateData, requestData)
+		// Convert htmx struct to map for protobuf compatibility
+		safeTemplateData := convertHtmxStructToMap(templateData)
+		safeRequestData := convertHtmxStructToMap(requestData).(map[string]any)
+
+		processedData, err := frameworkServer.ProcessManager.ExecuteHandler(domain, action, safeTemplateData, safeRequestData)
 
 		if err != nil {
 			log.Printf("Handler execution failed: %v", err)
