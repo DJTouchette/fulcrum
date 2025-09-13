@@ -8,12 +8,45 @@ class HandlerRegistry {
     this.handlers = new Map();
     this.fileWatchers = new Map();
     this.hotReload = options.hotReload !== false; // Default to true
+    this.domainStream = null;
+    this.pendingRequests = new Map();
+    this.requestCounter = 0;
     
     this.loadAllHandlers();
     
     if (this.hotReload) {
       this.setupHotReloading();
     }
+  }
+
+  setDomainStream(stream) {
+    this.domainStream = stream;
+
+    this.domainStream.on('data', (message) => {
+      const promise = this.pendingRequests.get(message.request_id);
+      if (promise) {
+        if (message.success) {
+          promise.resolve(JSON.parse(message.payload));
+        } else {
+          promise.reject(new Error(message.error));
+        }
+        this.pendingRequests.delete(message.request_id);
+      }
+    });
+  }
+
+  sendFrameworkMessage(type, payload, req) {
+    return new Promise((resolve, reject) => {
+      const requestId = `${req._path}-${this.requestCounter++}`;
+      this.pendingRequests.set(requestId, { resolve, reject });
+
+      this.domainStream.write({
+        domain: 'fulcrum-js',
+        type: type,
+        request_id: requestId,
+        payload: JSON.stringify(payload)
+      });
+    });
   }
   
   // Walk the directory tree and load all handler.js files
@@ -200,7 +233,14 @@ async route(domain, action, params = {}, context) {
           action,
           params
         },
-        utils: this.createUtilities()
+        utils: this.createUtilities(),
+        fulcrum: {
+          db: {
+            find: async (table, query) => await this.sendFrameworkMessage('db_find', { table, query }, request),
+            create: async (table, data) => await this.sendFrameworkMessage('db_create', { table, data }, request),
+            update: async (table, id, data) => await this.sendFrameworkMessage('db_update', { table, id, data }, request),
+          }
+        }
       };
       
       // Route to appropriate handler

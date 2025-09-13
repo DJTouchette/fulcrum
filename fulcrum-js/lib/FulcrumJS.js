@@ -1,3 +1,5 @@
+const grpc = require('@grpc/grpc-js');
+const protoLoader = require('@grpc/proto-loader');
 const path = require('path');
 const HandlerRegistry = require('../HandlerRegistry');
 const HandlerService = require('../HandlerService');
@@ -6,8 +8,10 @@ class FulcrumJS {
   constructor(options = {}) {
     this.options = {
       port: options.port || 50052,
+      frameworkPort: options.frameworkPort || 50051,
       handlersPath: options.handlersPath || this.discoverHandlersPath(),
       protoPath: options.protoPath || path.join(__dirname, '..', 'proto', 'handler.proto'),
+      frameworkProtoPath: options.frameworkProtoPath || path.join(__dirname, '..', '..', 'lib', 'lang', 'adapters', 'framework.proto'),
       hotReload: options.hotReload !== false,
       verbose: options.verbose || false,
       ...options
@@ -16,6 +20,8 @@ class FulcrumJS {
     this.registry = null;
     this.service = null;
     this.isRunning = false;
+    this.frameworkClient = null;
+    this.domainStream = null;
     
     if (this.options.verbose) {
       console.log('FulcrumJS initialized with options:', this.options);
@@ -52,6 +58,9 @@ class FulcrumJS {
   // Initialize the framework components
   async initialize() {
     try {
+      // Load framework proto
+      this.loadFrameworkProtoDefinition();
+
       // Create handler registry
       this.registry = new HandlerRegistry({
         handlersPath: this.options.handlersPath,
@@ -77,6 +86,51 @@ class FulcrumJS {
       throw error;
     }
   }
+
+  loadFrameworkProtoDefinition() {
+    const packageDefinition = protoLoader.loadSync(this.options.frameworkProtoPath, {
+      keepCase: true,
+      longs: String,
+      enums: String,
+      defaults: true,
+      oneofs: true
+    });
+    
+    this.frameworkProto = grpc.loadPackageDefinition(packageDefinition).framework;
+  }
+
+  async connectToFramework() {
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        this.frameworkClient = new this.frameworkProto.FrameworkService(`localhost:${this.options.frameworkPort}`, grpc.credentials.createInsecure());
+        
+        this.domainStream = this.frameworkClient.DomainCommunication();
+
+        this.domainStream.on('data', (message) => {
+          console.log('Received message from framework:', message);
+        });
+
+        this.domainStream.on('end', () => {
+          console.log('DomainCommunication stream ended.');
+        });
+
+        this.domainStream.on('error', (error) => {
+          console.error('DomainCommunication stream error:', error);
+          reject(error);
+        });
+
+        // Send a registration message
+        this.domainStream.write({
+          domain: 'fulcrum-js',
+          type: 'domain_register',
+          payload: JSON.stringify({})
+        });
+
+        console.log('Connected to framework and initiated DomainCommunication stream.');
+        resolve();
+      }, 1000);
+    });
+  }
   
   // Start the handler service
   async start() {
@@ -91,6 +145,8 @@ class FulcrumJS {
     
     try {
       await this.service.start();
+      await this.connectToFramework(); // Connect to the framework
+      this.registry.setDomainStream(this.domainStream); // Pass the stream to the registry
       this.isRunning = true;
       
       if (this.options.verbose) {
@@ -128,6 +184,7 @@ class FulcrumJS {
       return true;
     } catch (error) {
       console.error('Error stopping FulcrumJS:', error);
+      process.exit(1);
       throw error;
     }
   }
@@ -160,7 +217,7 @@ class FulcrumJS {
   logServiceInfo() {
     const info = this.getInfo();
     
-    console.log('\n=== FulcrumJS Service Information ===');
+    console.log('=== FulcrumJS Service Information ===');
     console.log(`Status: ${info.status}`);
     console.log(`Port: ${info.service.port}`);
     console.log(`Handlers Path: ${info.options.handlersPath}`);
@@ -174,7 +231,7 @@ class FulcrumJS {
     } else {
       console.log('No handlers found. Create handler.js files in your domains.');
     }
-    console.log('=====================================\n');
+    console.log('=====================================');
   }
   
   // Check if a handler exists
@@ -217,7 +274,7 @@ class FulcrumJS {
   // Graceful shutdown handler
   setupGracefulShutdown() {
     const shutdown = async (signal) => {
-      console.log(`\nReceived ${signal}, shutting down gracefully...`);
+      console.log(`Received ${signal}, shutting down gracefully...`);
       
       try {
         await this.stop();
@@ -247,3 +304,4 @@ class FulcrumJS {
 }
 
 module.exports = FulcrumJS;
+

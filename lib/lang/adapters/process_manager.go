@@ -124,7 +124,11 @@ func (pm *ProcessManager) isFulcrumJSAvailable() bool {
 
 // createCLICommand creates a command using the fulcrum-js CLI
 func (pm *ProcessManager) createCLICommand(config HandlerConfig) *exec.Cmd {
-	args := []string{"dev", "--port", fmt.Sprintf("%d", config.Port)}
+	args := []string{
+		"dev",
+		"--port", fmt.Sprintf("%d", config.Port),
+		"--framework-port", fmt.Sprintf("%d", config.FrameworkPort),
+	}
 
 	if config.HandlersPath != "" {
 		args = append(args, "--handlers", config.HandlersPath)
@@ -358,18 +362,20 @@ func (pm *ProcessManager) StopAll() error {
 
 // HandlerConfig represents configuration for the handler service
 type HandlerConfig struct {
-	Port         int
-	HandlersPath string
-	Verbose      bool
-	HotReload    bool
+	Port          int
+	FrameworkPort int
+	HandlersPath  string
+	Verbose       bool
+	HotReload     bool
 }
 
 // AutoDetectHandlerConfig tries to detect handler configuration from the app structure
 func (pm *ProcessManager) AutoDetectHandlerConfig() HandlerConfig {
 	config := HandlerConfig{
-		Port:      50052,
-		Verbose:   pm.verbose,
-		HotReload: true,
+		Port:          50052,
+		FrameworkPort: 50051,
+		Verbose:       pm.verbose,
+		HotReload:     true,
 	}
 
 	// Try to find handlers directory
@@ -404,7 +410,7 @@ func (pm *ProcessManager) ExecuteHandler(domain, action string, sqlData, request
 		return nil, fmt.Errorf("handler client not available")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 	defer cancel()
 
 	// Convert data to protobuf structs

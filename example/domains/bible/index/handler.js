@@ -1,6 +1,10 @@
 module.exports = async function(context) {
-  const response = await fetch('https://bible-api.com/data/web/random')
-  const data = await response.json();
+  console.log(context);
+  const user = await context.fulcrum.db.find('users', { id: 1 });
 
-  return data;
+  console.log(user)
+  // const response = await fetch('https://bible-api.com/data/web/random')
+  // const data = await response.json();
+
+  return [];
 };
