@@ -1519,6 +1519,12 @@ func StartBothServersWithProcessManager(appConfig *parser.AppConfig) {
 	}
 	appConfig.Views = renderer
 
+	if appConfig.Mode == "develop" {
+		if err := setupHotReloading(appConfig); err != nil {
+			log.Printf("Warning: Could not setup hot reloading: %v", err)
+		}
+	}
+
 	// Validate and preload templates
 	if err := appConfig.ValidateRoutes(); err != nil {
 		log.Printf("Warning: Route validation issues found: %v", err)

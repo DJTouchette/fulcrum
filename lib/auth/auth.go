@@ -36,6 +36,20 @@ var users = map[string]User{
 	"user":  {Username: "user", Password: "userpass"},
 }
 
+// func CurrentUser(jwt string, fs *lang_adapters.FrameworkServer) {
+// 	params := map[string]any{
+// 		"username": username,
+// 	}
+//
+// 	// Query for user with password_hash
+// 	resultJSON, err := fs.DbExecutor.ExecuteSQL(ctx, "SELECT id, email, password_hash FROM users WHERE email = :username", params, nil)
+// 	if err != nil {
+// 		log.Printf("❌ Database execution failed: %v", err)
+// 		http.Redirect(w, r, "/auth/login?error=Internal+Server+Error", http.StatusSeeOther)
+// 		return
+// 	}
+// }
+
 // findAuthTemplate finds an auth template, checking project domains first, then lib/views fallback
 func findAuthTemplate(templateName string) (string, error) {
 	// Get current working directory for project-specific templates
@@ -267,7 +281,7 @@ func handleLoginSubmit(w http.ResponseWriter, r *http.Request, fs *lang_adapters
 	// Create JWT token
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"Username": user.Username,
-		"Id":       user.Id,
+		"UserId":   user.Id,
 		"exp":      time.Now().Add(24 * time.Hour).Unix(),
 		"iat":      time.Now().Unix(),
 	})
@@ -455,7 +469,7 @@ func tryRegisterRoute(mux *http.ServeMux, pattern string, handler func(http.Resp
 			default:
 				errStr = fmt.Sprintf("%v", r)
 			}
-			
+
 			// Check if this is a route conflict panic
 			if strings.Contains(errStr, "conflicts with pattern") {
 				log.Printf("⚠️ Route %s already registered, skipping manual registration", pattern)
